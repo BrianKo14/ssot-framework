@@ -1,0 +1,26 @@
+{
+  "name": "ssot-framework",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "start": "node --env-file=.env dist/index.js",
+    "dev": "node --env-file=.env --watch dist/index.js"
+  },
+  "keywords": [],
+  "dependencies": {
+    "express": "^5.2.1",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.2.0",
+    "@types/pg": "^8.23.1",
+    "typescript": "^7.0.2"
+  }
+}

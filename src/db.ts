@@ -1,3 +1,5 @@
+// Wrapper exposing a minimal query/close interface for the rest of the app
+
 import pg from 'pg';
 
 export interface Db {

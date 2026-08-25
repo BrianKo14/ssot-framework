@@ -1,6 +1,7 @@
 import express, { type ErrorRequestHandler } from 'express';
 import type { Db } from './db.js';
-import { crudRouter, type TableInfo } from './crud.js';
+import { crudRouter } from './crud.js';
+import type { TableInfo } from './schema.js';
 
 /** Error handling middleware */
 const onError: ErrorRequestHandler = (err, _req, res, _next) => {

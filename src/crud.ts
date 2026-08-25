@@ -1,12 +1,8 @@
-import { Router, type RequestHandler } from 'express';
+import { Router, type Request, type RequestHandler } from 'express';
 import type { Db } from './db.js';
+import type { TableInfo } from './schema.js';
 
 // Following the SSOT pattern, the source of truth for the table structure comes in from the schema, not the database.
-export interface TableInfo {
-	table: string;
-	pk: string;
-	columns: string[];		// columns we're allowed to read/write
-}
 
 /** Quote an identifier for use in a SQL query; treat them as names, not commands */
 const q = (ident: string) => `"${ident.replace(/"/g, '""')}"`;
@@ -24,22 +20,33 @@ export function crudRouter(db: Db, t: TableInfo): Router {
 
 	const cols = t.columns.map(q).join(', ');
 	const table = q(t.table);
-	const pk = q(t.pk);
+	const pkCols = t.pk.map(q).join(', ');
+
+	// One path segment per primary key column, so a composite key addresses a row as /api/cursos/2026-1/algebra
+	const pkParams = t.pk.map((_, i) => `pk${i}`);
+	const byPk = '/' + pkParams.map(p => `:${p}`).join('/');
+
+	/** Builds the "pk_col1 = $1 and pk_col2 = $2 ..." conjunction that addresses a single row.
+	 * @param used how many placeholders the query already spent, so the numbering continues from there */
+	const pkFilter = (used: number) => t.pk.map((c, i) => `${q(c)} = $${used + i + 1}`).join(' and ');
+
+	/** Reads the primary key values out of the path, in the order the schema declares the columns */
+	const pkValues = (req: Request) => pkParams.map(p => req.params[p]);
 
 
 	// GET /
-	// SELECT * FROM table ORDER BY primary_key
+	// SELECT cols FROM table ORDER BY pk_col1, pk_col2, ...
 	r.get('/', wrap(async (req, res) => {
-		const rows = await db.query(`select ${cols} from ${table} order by ${pk}`);	// sort by primary key
+		const rows = await db.query(`select ${cols} from ${table} order by ${pkCols}`);	// sort by primary key
 		res.json(rows);
 	}));
 
-	// GET /:id
-	// SELECT * FROM table WHERE primary_key = $1
-	r.get('/:id', wrap(async (req, res) => {
+	// GET /:pk0[/:pk1...]
+	// SELECT cols FROM table WHERE pk_col1 = $1 AND pk_col2 = $2 ...
+	r.get(byPk, wrap(async (req, res) => {
 		const rows = await db.query(
-			`select ${cols} from ${table} where ${pk} = $1`, [req.params.id]);
-		
+			`select ${cols} from ${table} where ${pkFilter(0)}`, pkValues(req));
+
 		if (!rows.length) { res.status(404).json({ error: 'not found' }); return; }
 
 		res.json(rows[0]);
@@ -61,20 +68,20 @@ export function crudRouter(db: Db, t: TableInfo): Router {
 		res.status(201).json(rows[0]);					// return the newly created row, including the primary key
 	}));
 
-	// PATCH /:id
-	// UPDATE table SET col1 = $1, col2 = $2, ... WHERE primary_key = $N RETURNING *
-	r.patch('/:id', wrap(async (req, res) => {
+	// PATCH /:pk0[/:pk1...]
+	// UPDATE table SET col1 = $1, col2 = $2, ... WHERE pk_col1 = $N ... RETURNING cols
+	r.patch(byPk, wrap(async (req, res) => {
 		const body = req.body as Record<string, unknown>;
 
-		const given = t.columns.filter(c => c in body && c !== t.pk);  		// only allow columns that are in the schema & don't update the primary key
+		const given = t.columns.filter(c => c in body && !t.pk.includes(c));  	// only allow columns that are in the schema & don't update the primary key
 
 		if (!given.length) { res.status(400).json({ error: 'no updatable columns provided' }); return; }
 
 		const sets = given.map((c, i) => `${q(c)} = $${i + 1}`).join(', ');	// build "col1 = $1, col2 = $2, ..." for the query
-		
+
 		const rows = await db.query(
-			`update ${table} set ${sets} where ${pk} = $${given.length + 1} returning ${cols}`,
-			[...given.map(c => body[c]), req.params.id]
+			`update ${table} set ${sets} where ${pkFilter(given.length)} returning ${cols}`,
+			[...given.map(c => body[c]), ...pkValues(req)]
 		);
 
 		if (!rows.length) { res.status(404).json({ error: 'not found' }); return; }
@@ -82,11 +89,11 @@ export function crudRouter(db: Db, t: TableInfo): Router {
 		res.json(rows[0]);
 	}));
 
-	// DELETE /:id
-	// DELETE FROM table WHERE primary_key = $1
-	r.delete('/:id', wrap(async (req, res) => {
+	// DELETE /:pk0[/:pk1...]
+	// DELETE FROM table WHERE pk_col1 = $1 AND pk_col2 = $2 ...
+	r.delete(byPk, wrap(async (req, res) => {
 		const rows = await db.query(
-			`delete from ${table} where ${pk} = $1 returning ${pk}`, [req.params.id]
+			`delete from ${table} where ${pkFilter(0)} returning ${pkCols}`, pkValues(req)
 		);
 
 		res.status(rows.length ? 204 : 404).end();

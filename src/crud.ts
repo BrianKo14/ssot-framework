@@ -1,8 +1,7 @@
 import { Router, type Request, type RequestHandler } from 'express';
 import type { Db } from './db.js';
+import { HttpError } from './http.js';
 import type { TableInfo } from './schema.js';
-
-// Following the SSOT pattern, the source of truth for the table structure comes in from the schema, not the database.
 
 /** Quote an identifier for use in a SQL query; treat them as names, not commands */
 const q = (ident: string) => `"${ident.replace(/"/g, '""')}"`;
@@ -11,6 +10,22 @@ const q = (ident: string) => `"${ident.replace(/"/g, '""')}"`;
  * Technically, Express 5 will handle this. Keeping it to make control flow explicit. */
 const wrap = (h: RequestHandler): RequestHandler =>
 	(req, res, next) => { void Promise.resolve(h(req, res, next)).catch(next); };
+
+
+// --- Filtering ---
+
+type Filter = Record<string, unknown>;
+
+/** Filter object -> SQL conditions.
+ * If the value is null, it writes '"nombre" is null'. Otherwise, '"nombres" = $n' and pushes the value onto `params`. */
+const conditions = (filter: Filter, params: unknown[]): string[] =>
+	Object.entries(filter).map(([col, value]) =>
+		value === null ? `${q(col)} is null` : `${q(col)} = $${params.push(value)}`);
+
+const where = (conds: string[]) => conds.length ? ` where ${conds.join(' and ')}` : '';
+
+/** Checks whether a filter value is simple and not a complex object. */
+const isScalar = (v: unknown) => v === null || ['string', 'number', 'boolean'].includes(typeof v);
 
 
 
@@ -26,29 +41,57 @@ export function crudRouter(db: Db, t: TableInfo): Router {
 	const pkParams = t.pk.map((_, i) => `pk${i}`);
 	const byPk = '/' + pkParams.map(p => `:${p}`).join('/');
 
-	/** Builds the "pk_col1 = $1 and pk_col2 = $2 ..." conjunction that addresses a single row.
-	 * @param used how many placeholders the query already spent, so the numbering continues from there */
-	const pkFilter = (used: number) => t.pk.map((c, i) => `${q(c)} = $${used + i + 1}`).join(' and ');
+	/** Request -> Primary key filter */
+	const pkFilter = (req: Request): Filter =>
+		Object.fromEntries(t.pk.map((c, i) => [c, req.params[pkParams[i]]]));
 
-	/** Reads the primary key values out of the path, in the order the schema declares the columns */
-	const pkValues = (req: Request) => pkParams.map(p => req.params[p]);
+	/** Reads the basic filter off the querystring: one JSON object, `{"col": value}` */
+	const parseFilter = (raw: unknown): Filter => {
+		if (raw === undefined) return {};
+		if (typeof raw !== 'string') throw new HttpError(400, 'filter must be given once');
+
+		let parsed: unknown;
+		try { parsed = JSON.parse(raw); }
+		catch { throw new HttpError(400, 'filter is not valid JSON'); }
+
+		if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
+			throw new HttpError(400, 'filter must be a JSON object');
+
+		const filter = parsed as Filter;
+
+		// The column names are the schema's, never the caller's: unknown keys are refused.
+		const unknown = Object.keys(filter).filter(c => !t.columns.includes(c));
+		if (unknown.length) throw new HttpError(400, `unknown filter column(s): ${unknown.join(', ')}`);
+
+		const complex = Object.keys(filter).filter(c => !isScalar(filter[c]));
+		if (complex.length) throw new HttpError(400, `filter value must be a scalar: ${complex.join(', ')}`);
+
+		return filter;
+	};
 
 
 
 	/** --- ENDPOINTS --- **/
 
-	// GET /
-	// SELECT cols FROM table ORDER BY pk_col1, pk_col2, ...
+	// GET /[?filter={"col":value,...}]
+	// SELECT cols FROM table [WHERE col = $1 AND col2 IS NULL ...] ORDER BY pk_col1, pk_col2, ...
 	r.get('/', wrap(async (req, res) => {
-		const rows = await db.query(`select ${cols} from ${table} order by ${pkCols}`);	// sort by primary key
+		const params: unknown[] = [];
+		const filtered = where(conditions(parseFilter(req.query.filter), params));	// fills params
+
+		const rows = await db.query(
+			`select ${cols} from ${table}${filtered} order by ${pkCols}`, params);	// sort by primary key
+
 		res.json(rows);
 	}));
 
 	// GET /:pk0[/:pk1...]
 	// SELECT cols FROM table WHERE pk_col1 = $1 AND pk_col2 = $2 ...
 	r.get(byPk, wrap(async (req, res) => {
-		const rows = await db.query(
-			`select ${cols} from ${table} where ${pkFilter(0)}`, pkValues(req));
+		const params: unknown[] = [];
+		const addressed = where(conditions(pkFilter(req), params));
+
+		const rows = await db.query(`select ${cols} from ${table}${addressed}`, params);
 
 		if (!rows.length) { res.status(404).json({ error: 'not found' }); return; }
 
@@ -83,12 +126,13 @@ export function crudRouter(db: Db, t: TableInfo): Router {
 
 			if (!given.length) { res.status(400).json({ error: 'no updatable columns provided' }); return; }
 
-			const sets = given.map((c, i) => `${q(c)} = $${i + 1}`).join(', ');	// build "col1 = $1, col2 = $2, ..." for the query
+			const params: unknown[] = [];
+			// Build "col1 = $1, col2 = $2, ..."; a column the body leaves out is written as null
+			const sets = given.map(c => `${q(c)} = $${params.push(body[c] ?? null)}`).join(', ');
+			const addressed = where(conditions(pkFilter(req), params));
 
 			const rows = await db.query(
-				`update ${table} set ${sets} where ${pkFilter(given.length)} returning ${cols}`,
-				[...given.map(c => body[c] ?? null), ...pkValues(req)]	// a column the body leaves out is written as null
-			);
+				`update ${table} set ${sets}${addressed} returning ${cols}`, params);
 
 			if (!rows.length) { res.status(404).json({ error: 'not found' }); return; }
 
@@ -104,9 +148,11 @@ export function crudRouter(db: Db, t: TableInfo): Router {
 	// DELETE /:pk0[/:pk1...]
 	// DELETE FROM table WHERE pk_col1 = $1 AND pk_col2 = $2 ...
 	r.delete(byPk, wrap(async (req, res) => {
+		const params: unknown[] = [];
+		const addressed = where(conditions(pkFilter(req), params));
+
 		const rows = await db.query(
-			`delete from ${table} where ${pkFilter(0)} returning ${pkCols}`, pkValues(req)
-		);
+			`delete from ${table}${addressed} returning ${pkCols}`, params);
 
 		res.status(rows.length ? 204 : 404).end();
 	}));

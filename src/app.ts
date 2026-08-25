@@ -1,12 +1,15 @@
 import express, { type ErrorRequestHandler } from 'express';
 import type { Db } from './db.js';
 import { crudRouter } from './crud.js';
+import { HttpError } from './http.js';
 import type { TableInfo } from './schema.js';
 
 /** Error handling middleware */
 const onError: ErrorRequestHandler = (err, _req, res, _next) => {
 	console.error(err);
-	res.status(500).json({ error: 'internal error' });
+
+	const status = err instanceof HttpError ? err.status : 500;
+	res.status(status).json({ error: status === 500 ? 'internal error' : err.message });
 };
 
 /** Takes a database connection and a list of tables.

@@ -34,6 +34,9 @@ export function crudRouter(db: Db, t: TableInfo): Router {
 	const pkValues = (req: Request) => pkParams.map(p => req.params[p]);
 
 
+
+	/** --- ENDPOINTS --- **/
+
 	// GET /
 	// SELECT cols FROM table ORDER BY pk_col1, pk_col2, ...
 	r.get('/', wrap(async (req, res) => {
@@ -68,26 +71,35 @@ export function crudRouter(db: Db, t: TableInfo): Router {
 		res.status(201).json(rows[0]);					// return the newly created row, including the primary key
 	}));
 
-	// PATCH /:pk0[/:pk1...]
-	// UPDATE table SET col1 = $1, col2 = $2, ... WHERE pk_col1 = $N ... RETURNING cols
-	r.patch(byPk, wrap(async (req, res) => {
-		const body = req.body as Record<string, unknown>;
+	/** The columns an update may write. The pk addresses the row, so it is never one of them */
+	const updatable = t.columns.filter(c => !t.pk.includes(c));
 
-		const given = t.columns.filter(c => c in body && !t.pk.includes(c));  	// only allow columns that are in the schema & don't update the primary key
+	/** UPDATE table SET col1 = $1, col2 = $2, ... WHERE pk_col1 = $N ... RETURNING cols
+	* @param columnsToSet PATCH picks, which of the updatable columns to write */
+	const update = (columnsToSet: (body: Record<string, unknown>) => string[]): RequestHandler =>
+		wrap(async (req, res) => {
+			const body = req.body as Record<string, unknown>;
+			const given = columnsToSet(body);
 
-		if (!given.length) { res.status(400).json({ error: 'no updatable columns provided' }); return; }
+			if (!given.length) { res.status(400).json({ error: 'no updatable columns provided' }); return; }
 
-		const sets = given.map((c, i) => `${q(c)} = $${i + 1}`).join(', ');	// build "col1 = $1, col2 = $2, ..." for the query
+			const sets = given.map((c, i) => `${q(c)} = $${i + 1}`).join(', ');	// build "col1 = $1, col2 = $2, ..." for the query
 
-		const rows = await db.query(
-			`update ${table} set ${sets} where ${pkFilter(given.length)} returning ${cols}`,
-			[...given.map(c => body[c]), ...pkValues(req)]
-		);
+			const rows = await db.query(
+				`update ${table} set ${sets} where ${pkFilter(given.length)} returning ${cols}`,
+				[...given.map(c => body[c] ?? null), ...pkValues(req)]	// a column the body leaves out is written as null
+			);
 
-		if (!rows.length) { res.status(404).json({ error: 'not found' }); return; }
+			if (!rows.length) { res.status(404).json({ error: 'not found' }); return; }
 
-		res.json(rows[0]);
-	}));
+			res.json(rows[0]);
+		});
+
+	// PUT /:pk0[/:pk1...] — full update, omitted columns set to null
+	r.put(byPk, update(() => updatable));
+
+	// PATCH /:pk0[/:pk1...] — partial update
+	r.patch(byPk, update(body => updatable.filter(c => c in body)));
 
 	// DELETE /:pk0[/:pk1...]
 	// DELETE FROM table WHERE pk_col1 = $1 AND pk_col2 = $2 ...

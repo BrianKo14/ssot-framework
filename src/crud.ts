@@ -2,7 +2,7 @@ import { Router, type Request, type RequestHandler } from 'express';
 import type { Db } from './db.js';
 import { HttpError } from './http.js';
 import type { ColumnInfo, TableInfo } from './schema.js';
-import { asRecord, checkedValues, namedColumns } from './validate.js';
+import { asRecord, checkedValues, namedColumns, rowValues } from './validate.js';
 
 /** Quote an identifier for use in a SQL query; treat them as names, not commands */
 const q = (ident: string) => `"${ident.replace(/"/g, '""')}"`;
@@ -65,6 +65,10 @@ export function crudRouter(db: Db, t: TableInfo): Router {
 	const addressedRow = (req: Request): Filter =>
 		checkedValues(t.pk, Object.fromEntries(t.pk.map((c, i) => [c.name, req.params[pkParams[i]]])), true);
 
+	/** This is the conversation step that would usually happen inside Postgres, moved to where the type definitions live. See `db.ts` for the default override.
+	 * It walks the row's columns and asks each column's own type handler to read its text. */	
+	const wire = (row: Record<string, unknown>) => rowValues(t.columns, row);
+
 
 
 	/** --- ENDPOINTS --- **/
@@ -82,7 +86,7 @@ export function crudRouter(db: Db, t: TableInfo): Router {
 		const rows = await db.query(
 			`select ${cols} from ${table}${filtered} order by ${pkCols}`, params);	// sort by primary key
 
-		res.json(rows);
+		res.json(rows.map(wire));
 	}));
 
 	// GET /:pk0[/:pk1...]
@@ -95,7 +99,7 @@ export function crudRouter(db: Db, t: TableInfo): Router {
 
 		if (!rows.length) { res.status(404).json({ error: 'not found' }); return; }
 
-		res.json(rows[0]);
+		res.json(wire(rows[0]));
 	}));
 
 	// POST /
@@ -117,7 +121,7 @@ export function crudRouter(db: Db, t: TableInfo): Router {
 			given.map(c => values[c.name])
 		);
 
-		res.status(201).json(rows[0]);					            // return the newly created row, including the primary key
+		res.status(201).json(wire(rows[0]));				            // return the newly created row, including the primary key
 	}));
 
 	const updatable = t.columns.filter(c => !t.pk.includes(c));
@@ -144,7 +148,7 @@ export function crudRouter(db: Db, t: TableInfo): Router {
 
 			if (!rows.length) { res.status(404).json({ error: 'not found' }); return; }
 
-			res.json(rows[0]);
+			res.json(wire(rows[0]));
 		});
 
 	// PUT /:pk0[/:pk1...] — full update, omitted columns set to null

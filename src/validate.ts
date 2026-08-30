@@ -1,4 +1,4 @@
-// Checking values on their way into the database.
+// Checking values on their way into the database, and reading them back out.
 
 import { HttpError } from './http.js';
 import type { ColumnInfo } from './schema.js';
@@ -54,6 +54,33 @@ export function checkedValues(
 	}
 
 	if (errors.length) throw new HttpError(400, errors.join('; '));
+
+	return values;
+}
+
+/** A row as the database returned it -> the values to send on the wire.
+ * e.g. "7" -> 7, "t" -> true, "2026-02-28" -> "2026-02-28".
+ *
+ * Throws a generic Error (=> 500) when a stored value doesn't match the column type,
+ * indicating a schema/database mismatch.
+ *
+ * @param cols the schema columns the row was selected with
+ * @param row the row, keyed by column name */
+export function rowValues(cols: ColumnInfo[], row: Record<string, unknown>): Record<string, unknown> {
+	const values: Record<string, unknown> = {};
+
+	for (const c of cols) {
+		const stored = row[c.name] ?? null;
+
+		if (stored === null) { values[c.name] = null; continue; }
+
+		const checked = c.type.check(stored);
+
+		if (!checked.ok)
+			throw new Error(`${c.name} holds ${JSON.stringify(stored)}, which is not ${c.type.expected}`);
+
+		values[c.name] = checked.value;
+	}
 
 	return values;
 }

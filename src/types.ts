@@ -50,10 +50,13 @@ export const text = (maxLength?: number): TypeHandler<string> =>
 		raw => typeof raw === 'string' && (maxLength === undefined || [...raw].length <= maxLength)
 			? raw : undefined);
 
+
+const BOOLEAN_TEXT = new Map([['true', true], ['t', true], ['false', false], ['f', false]]);
+
 /** Strictly true / false. */
 export const boolean: TypeHandler<boolean> = scalar('true or false',
 	raw => typeof raw === 'boolean' ? raw : undefined,
-	raw => raw === 'true' ? true : raw === 'false' ? false : undefined);
+	raw => BOOLEAN_TEXT.get(raw));
 
 
 // --- Temporal types ---

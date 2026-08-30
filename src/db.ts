@@ -8,8 +8,19 @@ export interface Db {
 }
 
 export async function connect(databaseUrl: string): Promise<Db> {
-  const pool = new pg.Pool({ connectionString: databaseUrl });		// create a pool of connections to the database to use on request
-  await pool.query('select 1');          		       		// runs a trivial test query
+
+  // Create a pool of connections to the database to use on request
+  const pool = new pg.Pool({
+    connectionString: databaseUrl,
+
+    // The driver defaults to parsing into JS types, but that causes problems, esp. with dates and intervals.
+    // Instead, we read the text of every column as a string and let the type handlers read it.
+    types: { getTypeParser: () => (value: string) => value },
+
+    options: '-c datestyle=ISO,YMD -c intervalstyle=iso_8601',    // e.g. '2026-08-25'
+  });
+
+  await pool.query('select 1');          		       		            // runs a trivial test query
 
   return {
     async query(text, params) {

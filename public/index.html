@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ssot-framework</title>
+
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<aside>
+	<h1>ssot-framework</h1>
+	<h2>Entidades</h2>
+	<nav id="entities"></nav>
+</aside>
+
+<main>
+	<header>
+		<h2 id="title"></h2>
+		<p id="status" data-state="busy">Cargando…</p>
+	</header>
+
+	<div class="sheet">
+		<table id="grid" hidden>
+			<thead><tr id="head"></tr></thead>
+			<tbody id="rows"></tbody>
+		</table>
+		<p id="empty" hidden>La entidad no tiene registros.</p>
+	</div>
+</main>
+
+<script type="module" src="/main.js"></script>
+</body>
+</html>

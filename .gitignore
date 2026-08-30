@@ -6,6 +6,10 @@ dist/
 build/
 *.tsbuildinfo
 
+# Frontend build output
+public/*.js
+public/*.js.map
+
 # Environment variables
 .env
 .env.*
@@ -27,6 +31,7 @@ yarn-error.log*
 .DS_Store
 
 # AI
+.claude
 CLAUDE.md
 SCOPE.md
 DECISIONS.md

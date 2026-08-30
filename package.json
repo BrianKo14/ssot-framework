@@ -7,8 +7,9 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "build": "tsc",
-    "build:watch": "tsc --watch",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.frontend.json",
+    "build:watch": "tsc -p tsconfig.json --watch",
+    "build:watch:frontend": "tsc -p tsconfig.frontend.json --watch",
     "db:reset": "docker compose down -v && docker compose up -d",
     "start": "node --env-file=.env dist/index.js",
     "dev": "node --env-file=.env --watch dist/index.js"

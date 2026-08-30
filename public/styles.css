@@ -1,0 +1,296 @@
+/* The look: a flat, hairline-ruled app shell in the idiom of Supabase Studio's table editor —
+   an entity rail on the left, one screen per entity on the right, a green accent for "you are
+   here". Nothing here names an entity, a column or a type: every rule keys off the structural
+   classes `main.ts` sets from the schema (`.pk`, `.required`, `.null`, `.gutter`), so the
+   stylesheet stays exactly as generic as the code that fills it. */
+
+
+/* --- Tokens --- */
+
+:root {
+	color-scheme: light dark;
+
+	--bg: #f7f7f7;			/* the app background, behind every panel */
+	--surface: #fff;		/* panels: the rail, the screen header, the grid */
+	--raised: #f2f2f2;		/* the grid's own furniture: header row and row-number gutter */
+	--hover: #efefee;
+	--line: #e5e5e4;
+	--ink: #171717;
+	--muted: #6f6f6f;
+	--faint: #9b9b9b;
+	--brand: #3ecf8e;
+	--brand-ink: #0b6b45;		/* the accent as *text*, dark enough to read on --surface */
+	--brand-soft: rgb(62 207 142 / .14);
+	--bad: #b42318;
+
+	--radius: 6px;
+
+	/* Drawn, not fetched: a mask, so `currentColor` tints it and one file covers both themes. */
+	--icon-table: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.4"><rect x="2.4" y="2.9" width="11.2" height="10.2" rx="1.8"/><path d="M2.4 6.4h11.2M6.6 6.4v6.7"/></svg>');
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--bg: #171717;
+		--surface: #1c1c1c;
+		--raised: #232323;
+		--hover: #272727;
+		--line: #2e2e2e;
+		--ink: #ededed;
+		--muted: #a1a1a1;
+		--faint: #6f6f6f;
+		--brand-ink: #3ecf8e;	/* on a dark surface the accent reads as-is */
+		--brand-soft: rgb(62 207 142 / .12);
+		--bad: #ff7b6b;
+	}
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+	margin: 0;
+	display: grid;
+	grid-template-columns: 15rem minmax(0, 1fr);	/* the rail is fixed; the grid takes the rest */
+	font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	background: var(--bg);
+	color: var(--ink);
+	-webkit-font-smoothing: antialiased;
+}
+
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+
+
+/* --- Entity rail --- */
+
+aside {
+	display: flex;
+	flex-direction: column;
+	padding: 0 .5rem .75rem;
+	border-right: 1px solid var(--line);
+	background: var(--surface);
+	overflow-y: auto;
+}
+
+/* Full-bleed inside the rail's padding, so its rule meets the screen header's. */
+h1 {
+	display: flex;
+	align-items: center;
+	gap: .5rem;
+	height: 3.25rem;
+	margin: 0 -.5rem .75rem;
+	padding: 0 .75rem;
+	border-bottom: 1px solid var(--line);
+	font-size: .875rem;
+	font-weight: 600;
+	letter-spacing: -.01em;
+}
+h1::before {
+	content: "";
+	width: 1.25rem;
+	height: 1.25rem;
+	border-radius: 5px;
+	background: linear-gradient(155deg, var(--brand), #1c9c6b);
+}
+
+aside h2 {
+	margin: .25rem .5rem .375rem;
+	font-size: .6875rem;
+	font-weight: 500;
+	text-transform: uppercase;
+	letter-spacing: .08em;
+	color: var(--faint);
+}
+
+#entities { display: flex; flex-direction: column; gap: 1px; }
+#entities a {
+	display: flex;
+	align-items: center;
+	gap: .5rem;
+	padding: .375rem .5rem;
+	border-radius: var(--radius);
+	color: var(--muted);
+	font-size: .8125rem;
+	text-decoration: none;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+#entities a::before {
+	content: "";
+	flex: none;
+	width: 1rem;
+	height: 1rem;
+	background: currentColor;
+	-webkit-mask: var(--icon-table) center / contain no-repeat;
+	mask: var(--icon-table) center / contain no-repeat;
+}
+#entities a:hover { background: var(--hover); color: var(--ink); }
+#entities a[aria-current="true"] {
+	background: var(--brand-soft);
+	color: var(--brand-ink);
+	font-weight: 500;
+}
+
+
+/* --- Screen header --- */
+
+main { display: flex; flex-direction: column; min-width: 0; }
+
+main > header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1rem;
+	height: 3.25rem;
+	padding: 0 1rem;
+	border-bottom: 1px solid var(--line);
+	background: var(--surface);
+}
+
+#title {
+	display: flex;
+	align-items: center;
+	gap: .5rem;
+	margin: 0;
+	font-size: .9375rem;
+	font-weight: 600;
+	letter-spacing: -.01em;
+}
+#title:not(:empty)::before {			/* the same mark the rail uses, before the entity is known */
+	content: "";
+	width: 1rem;
+	height: 1rem;
+	background: var(--faint);
+	-webkit-mask: var(--icon-table) center / contain no-repeat;
+	mask: var(--icon-table) center / contain no-repeat;
+}
+
+/* One pill, three states: counts when idle, a spinner while loading, red on failure. */
+#status {
+	display: inline-flex;
+	align-items: center;
+	gap: .5rem;
+	flex: none;
+	margin: 0;
+	padding: .1875rem .625rem;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: var(--bg);
+	color: var(--muted);
+	font-size: .75rem;
+	font-variant-numeric: tabular-nums;
+}
+#status[data-state="busy"]::before {
+	content: "";
+	width: .625rem;
+	height: .625rem;
+	border: 2px solid var(--line);
+	border-top-color: var(--brand);
+	border-radius: 50%;
+	animation: spin .7s linear infinite;
+}
+#status[data-state="error"] {
+	border-color: color-mix(in srgb, var(--bad) 35%, transparent);
+	background: color-mix(in srgb, var(--bad) 8%, transparent);
+	color: var(--bad);
+}
+
+@keyframes spin { to { transform: rotate(1turn); } }
+@media (prefers-reduced-motion: reduce) { #status[data-state="busy"]::before { animation-duration: 3s; } }
+
+
+/* --- Grid --- */
+
+.sheet {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;				/* the grid scrolls, the header and the rail stay put */
+	background: var(--bg);			/* the canvas shows past the last row, so the grid ends visibly */
+	scrollbar-width: thin;
+}
+
+table {
+	border-collapse: separate;		/* `collapse` drops the borders of sticky cells */
+	border-spacing: 0;
+	width: max-content;
+	min-width: 100%;
+	font-size: .8125rem;
+	font-variant-numeric: tabular-nums;
+}
+
+:is(th, td) {
+	height: 2.25rem;
+	padding: 0 .75rem;
+	border-right: 1px solid var(--line);
+	border-bottom: 1px solid var(--line);
+	background: var(--surface);		/* opaque: a sticky cell must not show what slides under it */
+	text-align: left;
+	white-space: nowrap;
+}
+:is(th, td):last-child { border-right: 0; }
+
+thead th {
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	background: var(--raised);
+	font-weight: 500;
+}
+th small { margin-left: .5rem; color: var(--faint); font-size: .6875rem; }
+th.pk::after {
+	content: "PK";
+	margin-left: .375rem;
+	padding: .0625rem .25rem;
+	border-radius: 3px;
+	background: var(--brand-soft);
+	color: var(--brand-ink);
+	font-size: .5625rem;
+	font-weight: 600;
+	letter-spacing: .04em;
+	vertical-align: 1px;
+}
+th.required:not(.pk)::after { content: "*"; margin-left: .25rem; color: var(--bad); }	/* a pk column is required by definition */
+
+/* The grid's own leading column: row numbers, pinned so they survive a sideways scroll. */
+.gutter {
+	position: sticky;
+	left: 0;
+	width: 3rem;
+	padding: 0 .625rem;
+	background: var(--raised);
+	color: var(--faint);
+	font-size: .6875rem;
+	text-align: right;
+	user-select: none;
+}
+th.gutter { z-index: 3; }			/* the corner cell outranks both sticky axes */
+td.gutter { z-index: 1; }
+
+tbody tr:hover :is(td, td.gutter) { background: var(--hover); }
+td.null { color: var(--faint); font-style: italic; }
+
+#empty {
+	margin: 0;
+	padding: 2.5rem 1rem;
+	color: var(--muted);
+	font-size: .8125rem;
+	text-align: center;
+}
+
+
+/* --- Narrow screens: the rail becomes a strip above the grid --- */
+
+@media (max-width: 45rem) {
+	/* `minmax(0, …)`, as above: a `1fr` track floors at min-content, and a wide grid would
+	   then push the whole page sideways instead of scrolling inside its own pane. */
+	body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+
+	aside { border-right: 0; border-bottom: 1px solid var(--line); overflow: visible; }
+	aside h2 { display: none; }
+
+	h1 { height: 2.75rem; margin-bottom: .5rem; }
+
+	#entities { flex-direction: row; gap: .25rem; overflow-x: auto; scrollbar-width: none; }
+}

@@ -1,6 +1,6 @@
 import express, { type ErrorRequestHandler } from 'express';
 import type { Db } from './db.js';
-import { crudRouter } from './crud.js';
+import { crudRouter, detailPath, isNestable } from './crud.js';
 import { HttpError } from './http.js';
 import type { TableInfo } from './schema.js';
 
@@ -23,6 +23,10 @@ export function buildApp(db: Db, tables: TableInfo[]) {
 	// For each table, mount a CRUD router at /api/<table_name>
 	for (const t of tables) {
 		app.use(`/api/${t.table}`, crudRouter(db, t));
+
+		// ...and mount each of its details' collections under it, at /api/<master>/<master key>/<detail>.
+		for (const ref of t.details.filter(isNestable))
+			app.use(`/api/${t.table}${detailPath(ref)}`, crudRouter(db, ref.from, ref));
 	}
 
 	app.use(onError);							// error handling middleware must be last

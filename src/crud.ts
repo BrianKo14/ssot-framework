@@ -1,7 +1,7 @@
 import { Router, type Request, type RequestHandler } from 'express';
 import type { Db } from './db.js';
 import { HttpError } from './http.js';
-import type { ColumnInfo, TableInfo } from './schema.js';
+import type { ColumnInfo, ReferenceInfo, TableInfo } from './schema.js';
 import { asRecord, checkedValues, namedColumns, rowValues } from './validate.js';
 
 /** Quote an identifier for use in a SQL query; treat them as names, not commands */
@@ -28,20 +28,49 @@ const where = (conds: string[]) => conds.length ? ` where ${conds.join(' and ')}
 
 
 
-/** Generic CRUD router factory */
-export function crudRouter(db: Db, t: TableInfo): Router {
-	const r = Router();
+// --- Master / Details ---
 
-	/** Lookup table for columns in O(1) */
-	const byName = new Map(t.columns.map(c => [c.name, c]));
+/** Returns a list of path parameter names for a composite key.
+ * e.g. `keyParams('pk', [colA, colB])` -> `['pk0', 'pk1']` */
+const keyParams = (prefix: string, key: ColumnInfo[]) => key.map((_, i) => `${prefix}${i}`);
+
+/** e.g. `segments(['pk0', 'pk1'])` -> `':pk0/:pk1'` */
+const segments = (params: string[]) => params.map(p => `/:${p}`).join('');
+
+/** e.g. `masterParams(ref)` -> `['mpk0', 'mpk1']` */
+const masterParams = (ref: ReferenceInfo) => keyParams('mpk', ref.to.pk);
+
+
+/** e.g. `detailPath(ref)` -> `'/api/cursos/2026-1/algebra'` */
+export const detailPath = (ref: ReferenceInfo) => `${segments(masterParams(ref))}/${ref.from.table}`;
+
+/** True iff the detail can be nested under its master's URL.
+ * Only if its fk matches the master's *primary* key. */
+export const isNestable = (ref: ReferenceInfo) =>
+	ref.targetColumns.length === ref.to.pk.length && ref.targetColumns.every(c => ref.to.pk.includes(c));
+
+
+
+/** Generic CRUD router factory.
+ * @param master when this table is mounted as a detail, the reference it was mounted through. */
+export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router {
+	const r = Router({ mergeParams: true });		// `mergeParams` lets the detail's router see the master's path parameters
 
 	const cols = t.columns.map(c => q(c.name)).join(', ');
 	const table = q(t.table);
 	const pkCols = t.pk.map(c => q(c.name)).join(', ');
 
-	// One path segment per primary key column, so a composite key addresses a row as /api/cursos/2026-1/algebra
-	const pkParams = t.pk.map((_, i) => `pk${i}`);
-	const byPk = '/' + pkParams.map(p => `:${p}`).join('/');
+	const pkParams = keyParams('pk', t.pk);
+	const byPk = segments(pkParams);
+
+	const fromMaster: [string, string][] = [];
+
+	if (master) {
+		const mParams = masterParams(master);
+
+		for (const [i, c] of master.columns.entries())
+			fromMaster.push([c.name, mParams[master.to.pk.indexOf(master.targetColumns[i])]]);
+	}
 
 	const parseFilter = (raw: unknown): Filter => {
 		if (raw === undefined) return {};
@@ -65,6 +94,14 @@ export function crudRouter(db: Db, t: TableInfo): Router {
 	const addressedRow = (req: Request): Filter =>
 		checkedValues(t.pk, Object.fromEntries(t.pk.map((c, i) => [c.name, req.params[pkParams[i]]])), true);
 
+	const withInherited = (req: Request, given: Record<string, unknown>): Record<string, unknown> => {
+		const repeated = fromMaster.filter(([name]) => name in given).map(([name]) => name);
+
+		if (repeated.length) throw new HttpError(400, `column(s) already set by the URL: ${repeated.join(', ')}`);
+
+		return { ...given, ...Object.fromEntries(fromMaster.map(([name, param]) => [name, req.params[param]])) };
+	};
+
 	/** This is the conversation step that would usually happen inside Postgres, moved to where the type definitions live. See `db.ts` for the default override.
 	 * It walks the row's columns and asks each column's own type handler to read its text. */	
 	const wire = (row: Record<string, unknown>) => rowValues(t.columns, row);
@@ -76,9 +113,9 @@ export function crudRouter(db: Db, t: TableInfo): Router {
 	// GET /[?filter={"col":value,...}]
 	// SELECT cols FROM table [WHERE col = $1 AND col2 IS NULL ...] ORDER BY pk_col1, pk_col2, ...
 	r.get('/', wrap(async (req, res) => {
-		const raw = parseFilter(req.query.filter);
+		const raw = withInherited(req, parseFilter(req.query.filter)); 			// under a master, its key comes from the path
 		// DEBUG: `required: false` — a null here asks `is null`, it does not assert the column is nullable.
-		const filter = checkedValues(namedColumns(byName, raw), raw, false);
+		const filter = checkedValues(namedColumns(t.byName, raw), raw, false);
 
 		const params: unknown[] = [];
 		const filtered = where(conditions(filter, params));
@@ -105,8 +142,8 @@ export function crudRouter(db: Db, t: TableInfo): Router {
 	// POST /
 	// INSERT INTO table (col1, col2, ...) VALUES ($1, $2, ...) RETURNING *
 	r.post('/', wrap(async (req, res) => {
-		const body = asRecord(req.body);
-		namedColumns(byName, body);						    // refuse columns the schema does not declare
+		const body = withInherited(req, asRecord(req.body));			    // under a master, its key comes from the path
+		namedColumns(t.byName, body);						    // refuse columns the schema does not declare
 
 		const given = t.columns.filter(c => c.name in body || requiredOnInsert(c)); // columns the body provided + required ones the body omitted
 
@@ -131,7 +168,7 @@ export function crudRouter(db: Db, t: TableInfo): Router {
 	const update = (columnsToSet: (body: Record<string, unknown>) => ColumnInfo[]): RequestHandler =>
 		wrap(async (req, res) => {
 			const body = asRecord(req.body);
-			namedColumns(byName, body);				// refuse columns the schema does not declare
+			namedColumns(t.byName, body);				// refuse columns the schema does not declare
 
 			const given = columnsToSet(body);
 

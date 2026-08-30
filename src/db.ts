@@ -1,11 +1,33 @@
 // Wrapper exposing a minimal query/close interface for the rest of the app
 
 import pg from 'pg';
+import { HttpError } from './http.js';
 
 export interface Db {
   query<T extends pg.QueryResultRow>(text: string, params?: unknown[]): Promise<T[]>;
   close(): Promise<void>;
 }
+
+// --- Error translation ---
+
+const INTEGRITY_STATUS = new Map([
+  ['23503', 409],       // foreign_key_violation
+  ['23505', 409],       // unique_violation
+  ['23502', 400],       // not_null_violation
+  ['23514', 400],       // check_violation
+]);
+
+const asHttpError = (err: unknown): unknown => {
+  if (!(err instanceof pg.DatabaseError)) return err;
+
+  const status = INTEGRITY_STATUS.get(err.code ?? '');
+
+  return status === undefined ? err : new HttpError(status, `violates constraint "${err.constraint}"`);
+};
+
+
+
+// --- CONNECTION ---
 
 export async function connect(databaseUrl: string): Promise<Db> {
 
@@ -24,8 +46,10 @@ export async function connect(databaseUrl: string): Promise<Db> {
 
   return {
     async query(text, params) {
-      const r = await pool.query(text, params as never[]);
-      return r.rows as never[];
+      try {
+        const r = await pool.query(text, params as never[]);
+        return r.rows as never[];
+      } catch (err) { throw asHttpError(err); }
     },
     close: () => pool.end(),
   };

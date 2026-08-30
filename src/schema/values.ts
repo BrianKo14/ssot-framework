@@ -1,7 +1,7 @@
 // Checking values on their way into the database, and reading them back out.
 
-import { HttpError } from './http.js';
-import type { ColumnInfo, Columns } from './schema.js';
+import { HttpError } from '../errors.js';
+import type { ColumnInfo, Columns } from './model.js';
 
 /** Takes the keys the client sent and returns the matching schema columns, in the order the client sent them.
  * Refuses any name the schema doesn't declare. */

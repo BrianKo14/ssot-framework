@@ -1,7 +1,7 @@
 // Wrapper exposing a minimal query/close interface for the rest of the app
 
 import pg from 'pg';
-import { HttpError } from './http.js';
+import { HttpError } from '../errors.js';
 
 export interface Db {
   query<T extends pg.QueryResultRow>(text: string, params?: unknown[]): Promise<T[]>;

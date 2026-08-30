@@ -1,13 +1,13 @@
 import path from 'node:path';
 import express, { type ErrorRequestHandler } from 'express';
-import type { Db } from './db.js';
+import type { Db } from '../db/postgres.js';
 import { crudRouter, detailPath, isNestable } from './crud.js';
-import { HttpError } from './http.js';
+import { HttpError } from '../errors.js';
 import { META, metaRouter } from './meta.js';
-import type { TableInfo } from './schema.js';
+import type { TableInfo } from '../schema/model.js';
 
 /** The static files directory for the frontend. */
-const PUBLIC_DIR = path.join(import.meta.dirname, '..', 'public');
+const PUBLIC_DIR = path.join(import.meta.dirname, '..', '..', 'public');
 
 /** Error handling middleware */
 const onError: ErrorRequestHandler = (err, _req, res, _next) => {

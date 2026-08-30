@@ -10,5 +10,5 @@
     "outDir": "public",
     "sourceMap": true
   },
-  "include": ["src/frontend", "src/api-meta.d.ts"]
+  "include": ["src/frontend", "src/shared"]
 }

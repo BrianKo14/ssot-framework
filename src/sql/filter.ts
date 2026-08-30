@@ -1,10 +1,10 @@
 // Reading a filter off the wire
 
-import type { FilterCondition, OperatorMeta } from './api-meta.js';
-import { HttpError } from './http.js';
-import type { ColumnInfo, Columns } from './schema.js';
-import { q } from './sql.js';
-import { type Checked, checkedValue, namedColumns, refuseAll } from './validate.js';
+import type { FilterCondition, OperatorMeta } from '../shared/api.js';
+import { HttpError } from '../errors.js';
+import type { ColumnInfo, Columns } from '../schema/model.js';
+import { q } from './identifier.js';
+import { type Checked, checkedValue, namedColumns, refuseAll } from '../schema/values.js';
 
 
 // --- The comparisons ---

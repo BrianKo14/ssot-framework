@@ -1,9 +1,9 @@
 // The `/api/_meta` endpoint: schema info for the frontend to use
 
 import { Router } from 'express';
-import type { ColumnMeta, SystemMeta, TableMeta } from './api-meta.js';
-import { operatorMeta } from './filter.js';
-import type { ColumnInfo, TableInfo } from './schema.js';
+import type { ColumnMeta, SystemMeta, TableMeta } from '../shared/api.js';
+import { operatorMeta } from '../sql/filter.js';
+import type { ColumnInfo, TableInfo } from '../schema/model.js';
 
 /** Name of the metadata endpoint. */
 export const META = '_meta';

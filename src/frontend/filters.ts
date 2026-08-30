@@ -1,6 +1,6 @@
 // The filter bar.
 
-import type { ColumnMeta, FilterCondition, OperatorMeta, TableMeta } from '../api-meta.js';
+import type { ColumnMeta, FilterCondition, OperatorMeta, TableMeta } from '../shared/api.js';
 import { classed, el } from './dom.js';
 
 

@@ -1,4 +1,4 @@
-import type { ColumnMeta, SystemMeta, TableMeta } from '../api-meta.js';
+import type { ColumnMeta, SystemMeta, TableMeta } from '../shared/api.js';
 import { byId, el } from './dom.js';
 import { filterBar, type FilterBar } from './filters.js';
 

@@ -1,4 +1,4 @@
-import { scalar, textual, typeOf, type TypeHandler } from './type-handler.js';
+import { scalar, textual, typeOf, type TypeHandler } from './handler.js';
 
 
 // --- Dates ---

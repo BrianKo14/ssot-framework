@@ -1,12 +1,7 @@
 import { defineEntities, defineEntity, type RecordDef } from 'system-definition';
-import { loadConfig } from './config.js';
-import { connect } from './db.js';
-import { buildApp } from './app.js';
-import { tablesFrom, typeCollectionOf } from './schema.js';
-import { commonTypes, text } from './types.js';
-
-const config = loadConfig();
-const db = await connect(config.databaseUrl);
+import { tablesFrom, typeCollectionOf } from '../schema/build.js';
+import { serve } from '../serve.js';
+import { commonTypes, text } from '../types/builtin.js';
 
 const types = { ...commonTypes, nombre: text(100) };
 const typeDefs = typeCollectionOf(types);
@@ -53,10 +48,4 @@ const entityDefs = defineEntities({
 	}),
 });
 
-const server = buildApp(db, tablesFrom(entityDefs, types))
-	.listen(config.port, () => console.log(`Listening on port ${config.port}`));
-
-// Catch Ctrl+C and process-manager stop signals => close server and DB pool cleanly.
-for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-	process.on(sig, () => server.close(() => void db.close()));
-}
+await serve(tablesFrom(entityDefs, types));

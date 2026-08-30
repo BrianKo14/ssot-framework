@@ -1,10 +1,10 @@
 import { Router, type Request, type RequestHandler } from 'express';
-import type { Db } from './db.js';
-import { equalities, filterConditions, parseFilter, where } from './filter.js';
-import { HttpError } from './http.js';
-import type { ColumnInfo, ReferenceInfo, TableInfo } from './schema.js';
-import { q } from './sql.js';
-import { asRecord, checkedValues, namedColumns, rowValues } from './validate.js';
+import type { Db } from '../db/postgres.js';
+import { equalities, filterConditions, parseFilter, where } from '../sql/filter.js';
+import { HttpError } from '../errors.js';
+import type { ColumnInfo, ReferenceInfo, TableInfo } from '../schema/model.js';
+import { q } from '../sql/identifier.js';
+import { asRecord, checkedValues, namedColumns, rowValues } from '../schema/values.js';
 
 /** Wraps route handler to reroute errors to the error handling middleware instead of crashing the process.
  * Technically, Express 5 will handle this. Keeping it to make control flow explicit. */
@@ -73,7 +73,7 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 		return { ...given, ...Object.fromEntries(fromMaster.map(([name, param]) => [name, req.params[param]])) };
 	};
 
-	/** This is the conversation step that would usually happen inside Postgres, moved to where the type definitions live. See `db.ts` for the default override.
+	/** This is the conversation step that would usually happen inside Postgres, moved to where the type definitions live. See `db/postgres.ts` for the default override.
 	 * It walks the row's columns and asks each column's own type handler to read its text. */	
 	const wire = (row: Record<string, unknown>) => rowValues(t.columns, row);
 

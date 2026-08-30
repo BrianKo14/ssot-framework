@@ -1,30 +1,15 @@
 import { Router, type Request, type RequestHandler } from 'express';
 import type { Db } from './db.js';
+import { equalities, filterConditions, parseFilter, where } from './filter.js';
 import { HttpError } from './http.js';
 import type { ColumnInfo, ReferenceInfo, TableInfo } from './schema.js';
+import { q } from './sql.js';
 import { asRecord, checkedValues, namedColumns, rowValues } from './validate.js';
-
-/** Quote an identifier for use in a SQL query; treat them as names, not commands */
-const q = (ident: string) => `"${ident.replace(/"/g, '""')}"`;
 
 /** Wraps route handler to reroute errors to the error handling middleware instead of crashing the process.
  * Technically, Express 5 will handle this. Keeping it to make control flow explicit. */
 const wrap = (h: RequestHandler): RequestHandler =>
 	(req, res, next) => { void Promise.resolve(h(req, res, next)).catch(next); };
-
-
-// --- Filtering ---
-
-type Filter = Record<string, unknown>;
-
-/** Filter object -> SQL conditions.
- * If the value is null, it writes '"nombre" is null'. Otherwise, '"nombres" = $n' and pushes the value onto `params`. */
-const conditions = (filter: Filter, params: unknown[]): string[] =>
-	Object.entries(filter).map(([col, value]) =>
-		value === null ? `${q(col)} is null` : `${q(col)} = $${params.push(value)}`);
-
-/** WHERE clause builder */
-const where = (conds: string[]) => conds.length ? ` where ${conds.join(' and ')}` : '';
 
 
 
@@ -72,26 +57,12 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 			fromMaster.push([c.name, mParams[master.to.pk.indexOf(master.targetColumns[i])]]);
 	}
 
-	const parseFilter = (raw: unknown): Filter => {
-		if (raw === undefined) return {};
-		if (typeof raw !== 'string') throw new HttpError(400, 'filter must be given once');
-
-		let parsed: unknown;
-		try { parsed = JSON.parse(raw); }
-		catch { throw new HttpError(400, 'filter is not valid JSON'); }
-
-		if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
-			throw new HttpError(400, 'filter must be a JSON object');
-
-		return parsed as Filter;
-	};
-
 	/** Required on insert = not nullable AND wihtout a default.
 	 * But TODO: FieldDef has no default/generated at the moment. */
 	const requiredOnInsert = (c: ColumnInfo) => !c.nullable;
 
 	/** The row a request addresses. Path params are always strings. */
-	const addressedRow = (req: Request): Filter =>
+	const addressedRow = (req: Request): Record<string, unknown> =>
 		checkedValues(t.pk, Object.fromEntries(t.pk.map((c, i) => [c.name, req.params[pkParams[i]]])), true);
 
 	const withInherited = (req: Request, given: Record<string, unknown>): Record<string, unknown> => {
@@ -110,15 +81,13 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 
 	/** --- ENDPOINTS --- **/
 
-	// GET /[?filter={"col":value,...}]
-	// SELECT cols FROM table [WHERE col = $1 AND col2 IS NULL ...] ORDER BY pk_col1, pk_col2, ...
+	// GET /[?filter={"col":value,"col2":{"op":"ge","value":…},...}]
+	// SELECT cols FROM table [WHERE col = $1 AND col2 >= $2 ...] ORDER BY pk_col1, pk_col2, ...
 	r.get('/', wrap(async (req, res) => {
 		const raw = withInherited(req, parseFilter(req.query.filter)); 			// under a master, its key comes from the path
-		// DEBUG: `required: false` — a null here asks `is null`, it does not assert the column is nullable.
-		const filter = checkedValues(namedColumns(t.byName, raw), raw, false);
 
 		const params: unknown[] = [];
-		const filtered = where(conditions(filter, params));
+		const filtered = where(filterConditions(t.byName, raw, params));
 
 		const rows = await db.query(
 			`select ${cols} from ${table}${filtered} order by ${pkCols}`, params);	// sort by primary key
@@ -130,7 +99,7 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 	// SELECT cols FROM table WHERE pk_col1 = $1 AND pk_col2 = $2 ...
 	r.get(byPk, wrap(async (req, res) => {
 		const params: unknown[] = [];
-		const addressed = where(conditions(addressedRow(req), params));
+		const addressed = where(equalities(addressedRow(req), params));
 
 		const rows = await db.query(`select ${cols} from ${table}${addressed}`, params);
 
@@ -178,7 +147,7 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 
 			const params: unknown[] = [];
 			const sets = given.map(c => `${q(c.name)} = $${params.push(values[c.name])}`).join(', ');
-			const addressed = where(conditions(addressedRow(req), params));
+			const addressed = where(equalities(addressedRow(req), params));
 
 			const rows = await db.query(
 				`update ${table} set ${sets}${addressed} returning ${cols}`, params);
@@ -198,7 +167,7 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 	// DELETE FROM table WHERE pk_col1 = $1 AND pk_col2 = $2 ...
 	r.delete(byPk, wrap(async (req, res) => {
 		const params: unknown[] = [];
-		const addressed = where(conditions(addressedRow(req), params));
+		const addressed = where(equalities(addressedRow(req), params));
 
 		const rows = await db.query(
 			`delete from ${table}${addressed} returning ${pkCols}`, params);

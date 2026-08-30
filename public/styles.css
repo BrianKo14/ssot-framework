@@ -1,18 +1,11 @@
-/* The look: a flat, hairline-ruled app shell in the idiom of Supabase Studio's table editor —
-   an entity rail on the left, one screen per entity on the right, a green accent for "you are
-   here". Nothing here names an entity, a column or a type: every rule keys off the structural
-   classes `main.ts` sets from the schema (`.pk`, `.required`, `.null`, `.gutter`), so the
-   stylesheet stays exactly as generic as the code that fills it. */
-
-
 /* --- Tokens --- */
 
 :root {
 	color-scheme: light dark;
 
-	--bg: #f7f7f7;			/* the app background, behind every panel */
+	--bg: #f7f7f7;
 	--surface: #fff;		/* panels: the rail, the screen header, the grid */
-	--raised: #f2f2f2;		/* the grid's own furniture: header row and row-number gutter */
+	--raised: #f2f2f2;		/* the grid's own furniture: header row and leading column */
 	--hover: #efefee;
 	--line: #e5e5e4;
 	--ink: #171717;
@@ -27,6 +20,9 @@
 
 	/* Drawn, not fetched: a mask, so `currentColor` tints it and one file covers both themes. */
 	--icon-table: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.4"><rect x="2.4" y="2.9" width="11.2" height="10.2" rx="1.8"/><path d="M2.4 6.4h11.2M6.6 6.4v6.7"/></svg>');
+	--icon-expand: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9"/></svg>');
+	--icon-close: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>');
+	--icon-search: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.3"/><path d="M10.3 10.3 13.4 13.4"/></svg>');
 }
 
 @media (prefers-color-scheme: dark) {
@@ -201,6 +197,160 @@ main > header {
 @media (prefers-reduced-motion: reduce) { #status[data-state="busy"]::before { animation-duration: 3s; } }
 
 
+/* --- Filter bar --- */
+
+/* One strip that reads as a single search box: the magnifier, the conditions already asked for,
+   and the box the next one is written in. Its own stacking context is the dropdown's, so the
+   dropdown lays over the grid without the grid's sticky cells showing through. */
+.filters {
+	position: relative;
+	display: flex;
+	align-items: flex-start;
+	gap: .625rem;
+	padding: .5rem 1rem;
+	border-bottom: 1px solid var(--line);
+	background: var(--surface);
+	cursor: text;
+}
+.filters[hidden] { display: none; }		/* `display: flex` would otherwise outvote the attribute */
+
+.filters::before {
+	content: "";
+	flex: none;
+	width: 1rem;
+	height: 1rem;
+	margin-top: .3125rem;
+	background: var(--faint);
+	-webkit-mask: var(--icon-search) center / contain no-repeat;
+	mask: var(--icon-search) center / contain no-repeat;
+}
+
+.chips {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: .375rem;
+	flex: 1;
+	min-width: 0;
+}
+
+/* A condition, read left to right the way it was written: column, comparison, value. */
+.chip {
+	display: inline-flex;
+	align-items: center;
+	gap: .375rem;
+	min-height: 1.625rem;
+	padding: .0625rem .1875rem .0625rem .5rem;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg);
+	font-size: .75rem;
+}
+.chip b { font-weight: 600; }
+.chip i {					/* the comparison's own symbol, as `_meta` published it */
+	color: var(--muted);
+	font-style: normal;
+	font-variant-numeric: tabular-nums;
+}
+
+/* Before a column is picked the draft is not a chip at all — it is the bar's search box, taking
+   whatever width is left. Once it is started, the box shrinks to its content and the spare
+   width is what leaves the half-written condition visibly missing its parts. */
+.chip.draft:not(.started) {
+	flex: 1;
+	min-width: 10rem;
+	padding: 0;
+	border-color: transparent;
+	background: none;
+}
+
+.chips input {
+	min-width: 2rem;
+	padding: 0;
+	border: 0;
+	background: none;
+	color: var(--ink);
+	font: inherit;
+	font-size: .75rem;
+	outline: 0;
+}
+.chip.draft:not(.started) input { width: 100%; font-size: .8125rem; }
+.chips input::placeholder { color: var(--faint); }
+
+.chip .x {
+	flex: none;
+	width: 1.125rem;
+	height: 1.125rem;
+	padding: 0;
+	border: 0;
+	border-radius: 3px;
+	background: transparent;
+	color: var(--faint);
+	cursor: pointer;
+}
+.chip .x::before {				/* the mark on its own box, so the focus ring is not masked away */
+	content: "";
+	display: block;
+	height: 100%;
+	background: currentColor;
+	-webkit-mask: var(--icon-close) center / .5625rem no-repeat;
+	mask: var(--icon-close) center / .5625rem no-repeat;
+}
+.chip .x:hover { background: var(--hover); color: var(--ink); }
+
+/* The dropdown: the screen's own columns, then the comparisons the backend published. */
+.filters .menu {
+	position: absolute;
+	top: calc(100% - .25rem);
+	left: 2.5rem;
+	z-index: 5;				/* over the grid's sticky cells, and over the peek */
+	min-width: 15rem;
+	max-height: 17rem;
+	margin: 0;
+	padding: .25rem;
+	overflow-y: auto;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--surface);
+	box-shadow: 0 8px 24px rgb(0 0 0 / .12);
+	list-style: none;
+	scrollbar-width: thin;
+}
+.filters .menu[hidden] { display: none; }
+
+.menu li {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1.5rem;
+	padding: .375rem .5rem;
+	border-radius: 4px;
+	font-size: .8125rem;
+}
+.menu .option { cursor: pointer; }
+.menu .option[aria-selected="true"] { background: var(--hover); }
+
+/* What the line is beside what it is called: a column's type, a comparison's symbol. */
+.menu .hint {
+	flex: none;
+	padding: .0625rem .3125rem;
+	border-radius: 3px;
+	background: var(--raised);
+	color: var(--muted);
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: .6875rem;
+}
+
+.menu .head {
+	padding: .5rem .5rem .25rem;
+	color: var(--faint);
+	font-size: .625rem;
+	text-transform: uppercase;
+	letter-spacing: .08em;
+}
+.menu .none { color: var(--muted); }
+
+
 /* --- Grid --- */
 
 .sheet {
@@ -239,7 +389,9 @@ thead th {
 	font-weight: 500;
 }
 th small { margin-left: .5rem; color: var(--faint); font-size: .6875rem; }
-th.pk::after {
+
+/* Column markers, on the grid's header cell and on the peek's field label alike. */
+.pk::after {
 	content: "PK";
 	margin-left: .375rem;
 	padding: .0625rem .25rem;
@@ -251,25 +403,76 @@ th.pk::after {
 	letter-spacing: .04em;
 	vertical-align: 1px;
 }
-th.required:not(.pk)::after { content: "*"; margin-left: .25rem; color: var(--bad); }	/* a pk column is required by definition */
+.required:not(.pk)::after { content: "*"; margin-left: .25rem; color: var(--bad); }	/* a pk column is required by definition */
 
-/* The grid's own leading column: row numbers, pinned so they survive a sideways scroll. */
-.gutter {
+/* The grid's own leading column: the handle that opens a row, pinned so it survives a
+   sideways scroll. It holds no data, so it stays empty until the row is pointed at. */
+.lead {
 	position: sticky;
 	left: 0;
-	width: 3rem;
-	padding: 0 .625rem;
+	width: 2.25rem;
+	padding: 0;
 	background: var(--raised);
-	color: var(--faint);
-	font-size: .6875rem;
-	text-align: right;
+	text-align: center;
 	user-select: none;
 }
-th.gutter { z-index: 3; }			/* the corner cell outranks both sticky axes */
-td.gutter { z-index: 1; }
+th.lead { z-index: 3; }				/* the corner cell outranks both sticky axes */
+td.lead { z-index: 1; }
 
-tbody tr:hover :is(td, td.gutter) { background: var(--hover); }
-td.null { color: var(--faint); font-style: italic; }
+.lead button {
+	display: block;
+	width: 100%;
+	height: 1.5rem;
+	padding: 0;
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--faint);
+	opacity: 0;				/* still clickable: only a pointer already on the row can reach it */
+	cursor: pointer;
+}
+.lead button::before {				/* the mark, on its own box, so the focus ring is not masked away */
+	content: "";
+	display: block;
+	height: 100%;
+	background: currentColor;
+	-webkit-mask: var(--icon-expand) center / .875rem no-repeat;
+	mask: var(--icon-expand) center / .875rem no-repeat;
+}
+tbody tr:hover .lead button,
+.lead button:focus-visible,
+tr.open .lead button { opacity: 1; }
+.lead button:hover { color: var(--ink); }
+
+/* The open row is marked on its handle alone — the row itself never changes colour. */
+tr.open .lead { background: var(--brand-soft); }
+tr.open .lead button { color: var(--brand-ink); }
+
+.null { color: var(--faint); font-style: italic; }
+
+/* A cell that can be written into. The signal is the cell's own ring, not a tint across the whole
+   row: what is about to be edited is one value, not the record. */
+td.editable { cursor: cell; }
+td.editable:hover { outline: 1px solid var(--line); outline-offset: -1px; }
+
+/* The editor is laid over its cell, not placed inside it: an in-flow <input> carries an intrinsic
+   width and would widen the column on opening. Out of flow it takes the cell's own box exactly —
+   same padding, same font — so the grid does not move a pixel while a value is being written. */
+td.editing { position: relative; }
+td.editing input {
+	position: absolute;
+	inset: 0;
+	padding: 0 .75rem;
+	border: 0;
+	background: var(--surface);		/* opaque: the value underneath is covered, not shown twice */
+	color: var(--ink);
+	font: inherit;
+	font-variant-numeric: inherit;
+	outline: 2px solid var(--brand);
+	outline-offset: -2px;
+}
+td.editing input:disabled { color: var(--muted); }	/* in flight: the value is the server's problem now */
+td.bad input { outline-color: var(--bad); }		/* refused, and still on screen to be fixed */
 
 #empty {
 	margin: 0;
@@ -278,6 +481,97 @@ td.null { color: var(--faint); font-style: italic; }
 	font-size: .8125rem;
 	text-align: center;
 }
+
+
+/* --- Row peek --- */
+
+/* Fixed, not a third column: the grid keeps its width and its scroll position while a row is
+   being read, and the same panel works on a narrow screen without a second layout. */
+#peek {
+	position: fixed;
+	inset: 0 0 0 auto;
+	z-index: 4;
+	display: flex;
+	flex-direction: column;
+	width: min(24rem, 100%);
+	border-left: 1px solid var(--line);
+	background: var(--surface);
+	box-shadow: -1px 0 24px rgb(0 0 0 / .1);
+}
+#peek[hidden] { display: none; }		/* `display: flex` would otherwise outvote the attribute */
+
+#peek > header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 1rem;
+	flex: none;
+	min-height: 3.25rem;
+	padding: .5rem .75rem .5rem 1rem;
+	border-bottom: 1px solid var(--line);
+}
+#peek > header > div { min-width: 0; }		/* long values elide instead of pushing the close button out */
+
+#peek-entity {
+	display: block;
+	color: var(--faint);
+	font-size: .6875rem;
+	text-transform: uppercase;
+	letter-spacing: .08em;
+}
+#peek-title {
+	margin: 0;
+	font-size: .9375rem;
+	font-weight: 600;
+	letter-spacing: -.01em;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+#peek-close {
+	flex: none;
+	width: 1.75rem;
+	height: 1.75rem;
+	padding: 0;
+	border: 0;
+	border-radius: var(--radius);
+	background: transparent;
+	color: var(--muted);
+	cursor: pointer;
+}
+#peek-close::before {
+	content: "";
+	display: block;
+	height: 100%;
+	background: currentColor;
+	-webkit-mask: var(--icon-close) center / .875rem no-repeat;
+	mask: var(--icon-close) center / .875rem no-repeat;
+}
+#peek-close:hover { background: var(--hover); color: var(--ink); }
+
+/* The row read downwards: one field per line, so nothing is cut off the way the grid cuts it. */
+#peek-fields {
+	margin: 0;
+	overflow-y: auto;
+	scrollbar-width: thin;
+}
+#peek-fields dt {
+	padding: .75rem 1rem .125rem;
+	color: var(--faint);
+	font-size: .6875rem;
+	text-transform: uppercase;
+	letter-spacing: .06em;
+}
+#peek-fields dd {
+	margin: 0;
+	padding: 0 1rem .75rem;
+	border-bottom: 1px solid var(--line);
+	font-size: .8125rem;
+	font-variant-numeric: tabular-nums;
+	overflow-wrap: anywhere;
+}
+#peek-fields dd:last-child { border-bottom: 0; }
 
 
 /* --- Narrow screens: the rail becomes a strip above the grid --- */

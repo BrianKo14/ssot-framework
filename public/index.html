@@ -21,6 +21,9 @@
 		<p id="status" data-state="busy">Cargando…</p>
 	</header>
 
+	<!-- Filter bar -->
+	<div id="toolbar"></div>
+
 	<div class="sheet">
 		<table id="grid" hidden>
 			<thead><tr id="head"></tr></thead>
@@ -29,6 +32,18 @@
 		<p id="empty" hidden>La entidad no tiene registros.</p>
 	</div>
 </main>
+
+<!-- One row view -->
+<section id="peek" hidden aria-labelledby="peek-title">
+	<header>
+		<div>
+			<small id="peek-entity"></small>
+			<h2 id="peek-title"></h2>
+		</div>
+		<button id="peek-close" type="button" title="Cerrar" aria-label="Cerrar"></button>
+	</header>
+	<dl id="peek-fields"></dl>
+</section>
 
 <script type="module" src="/main.js"></script>
 </body>

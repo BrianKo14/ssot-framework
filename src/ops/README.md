@@ -15,6 +15,26 @@ shell history and `ps` would keep it.
 
 This is the only way to create the first admin, there is no HTTP endpoint for it.
 
+### General form
+
+```
+npm run auth:user -- <username> [--admin | --no-admin] [--active | --inactive] [--email <address>] [--no-password]
+```
+
+- `<username>` — the sole positional argument: the user to create or edit.
+- `--admin` / `--no-admin` — grant or revoke admin rights.
+- `--active` / `--inactive` — reactivate or deactivate. A deactivated user cannot
+  log in and their existing sessions stop resolving.
+- `--email <address>` — set the email (omit the argument to clear it).
+- `--no-password` — edit the profile without reading or changing the password.
+
+Paired flags are last-wins. On an **existing** user, every field you don't pass
+keeps its current value. On a **new** user the defaults are `--no-admin`,
+`--active`, no email, and a password is mandatory — so don't pass `--no-password`,
+or the account is created with no way to log in.
+
+## Examples
+
 ### Create an admin
 
 ```bash

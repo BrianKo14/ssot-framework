@@ -60,6 +60,7 @@ export const boolean: TypeHandler<boolean> = scalar('true or false',
 
 
 // --- Temporal types ---
+// Kept as strings end to end for simplicity, because JS Date is a mess. (TODO: use temporal types.)
 
 export const date: TypeHandler<string> = textual('a date (YYYY-MM-DD)',
 	new RegExp(`^${DATE_SHAPE}$`), m => isRealDate(m, 1) ? m[0] : undefined);

@@ -6,7 +6,9 @@ import { commonTypes, text } from '../types/builtin.js';
 const types = { ...commonTypes, nombre: text(100) };
 const typeDefs = typeCollectionOf(types);
 
-// The system definition: every concept is named once here
+// --- The system definition ---
+
+// --> Structure
 const entityDefs = defineEntities({
 	cliente: defineEntity({
 		pk: ['id'],
@@ -48,10 +50,11 @@ const entityDefs = defineEntities({
 	}),
 });
 
+// --> Authorization policy
 const access = {
-	cliente: { admin: CAPABILITIES, recepcion: ['read', 'create'] },
-	reserva: { admin: CAPABILITIES, recepcion: CAPABILITIES, cocina: ['read'] },
-	item: { admin: CAPABILITIES, recepcion: CAPABILITIES, cocina: ['read'] },
+	cliente: { admin: CAPABILITIES, sub: ['read', 'create'] },
+	reserva: { admin: CAPABILITIES, sub: ['read'] },
+	item: { admin: CAPABILITIES, sub: ['read'] },
 } satisfies AccessDef<typeof entityDefs>;
 
 await serve(tablesFrom(entityDefs, types, access));

@@ -2,12 +2,12 @@
 
 import { defineEntities, defineEntity, type RecordDef, tablesFrom, typeCollectionOf } from '../schema/build.js';
 import type { ColumnInfo, TableInfo } from '../schema/model.js';
-import { commonTypes, digest, password, text } from '../types/builtin.js';
+import { commonTypes, digest, password as passwordType, text } from '../types/builtin.js';
 
 const authTypes = {
 	...commonTypes,
-	nombre: text(60),		// login identifier
-	secreto: text(200),		// PHC-format scrypt hash
+	username: text(60),		// login identifier
+	secret: text(200),		// PHC-format scrypt hash
 	digest,				// SHA-256 of a session token, see `digestOf` in `hash.ts`
 };
 
@@ -17,42 +17,46 @@ const entityDefs = defineEntities({
 
 	/** User's identity and profile.
 	 * Hold no secrets, so one could mount this entity to the screen later.*/
-	usuario: defineEntity({
-		pk: ['nombre'],
+	user: defineEntity({
+		pk: ['username'],
 		fields: {
-			nombre: { type: 'nombre', isName: true },
+			username: { type: 'username', isName: true },
 			email: { type: 'text' },
-			es_admin: { type: 'boolean', nullable: false },
-			activo: { type: 'boolean', nullable: false },
+			is_admin: { type: 'boolean', nullable: false },
+			active: { type: 'boolean', nullable: false },
 		} satisfies RecordDef<typeof typeDefs>,
 		fks: {},
 	}),
 
 	/** User's credentials. */
-	credencial: defineEntity({
-		pk: ['usuario'],
+	credential: defineEntity({
+		pk: ['user'],
 		fields: {
-			usuario: { type: 'nombre' },
-			hash: { type: 'secreto', nullable: false },
+			user: { type: 'username' },
+			hash: { type: 'secret', nullable: false },
 		} satisfies RecordDef<typeof typeDefs>,
-		fks: { usuario: { entity: 'usuario', fields: { usuario: 'nombre' } } },
+		fks: { user: { entity: 'user', fields: { user: 'username' } } },
 	}),
 
 	/** A live login session. */
-	sesion: defineEntity({
+	session: defineEntity({
 		pk: ['token'],
 		fields: {
 			token: { type: 'digest' },			  	// SHA-256 of the session token, see `digestOf` in `hash.ts`
-			usuario: { type: 'nombre', nullable: false },
-			creado_en: { type: 'datetime', nullable: false },	// UTC timestamp of creation, see `now()` in `store.ts`
-			expira: { type: 'datetime', nullable: false },		// Idem.
+			user: { type: 'username', nullable: false },
+			created_at: { type: 'datetime', nullable: false },	// UTC timestamp of creation, see `now()` in `store.ts`
+			expires_at: { type: 'datetime', nullable: false },	// Idem.
 		} satisfies RecordDef<typeof typeDefs>,
-		fks: { usuario: { entity: 'usuario', fields: { usuario: 'nombre' } } },
+		fks: { user: { entity: 'user', fields: { user: 'username' } } },
 	}),
 });
 
 /** Framework's tables.
- * Built separately and never mixed with the app's regular tables. */
+ * Built separately and never mixed with the app's regular tables.
+ *
+ * Exported with a `Table` suffix: `store.ts` needs plain `user` / `session` as local variable
+ * names for the *rows* it reads, and the suffix keeps those from colliding with the `TableInfo`
+ * these actually are. */
 export const authTables = tablesFrom(entityDefs, authTypes);
 
 const find = (name: string): TableInfo => {
@@ -63,9 +67,9 @@ const find = (name: string): TableInfo => {
 	return t;
 };
 
-export const usuario = find('usuario');
-export const credencial = find('credencial');
-export const sesion = find('sesion');
+export const userTable = find('user');
+export const credentialTable = find('credential');
+export const sessionTable = find('session');
 
 /** A column in an auth table. */
 export const col = (t: TableInfo, name: string): ColumnInfo => {
@@ -78,7 +82,7 @@ export const col = (t: TableInfo, name: string): ColumnInfo => {
 
 /** What a password must look like.
  * The plaintext password is not stored, but it still has a type. */
-export const clave: ColumnInfo = { name: 'clave', typeName: 'clave', nullable: false, type: password() };
+export const password: ColumnInfo = { name: 'password', typeName: 'password', nullable: false, type: passwordType() };
 
 /** What a login request must carry. */
-export const loginFields: ColumnInfo[] = [col(usuario, 'nombre'), clave];
+export const loginFields: ColumnInfo[] = [col(userTable, 'username'), password];

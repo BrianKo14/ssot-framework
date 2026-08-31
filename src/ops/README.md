@@ -49,7 +49,7 @@ endpoint is `/api/_auth`.
 ```bash
 curl -X POST localhost:3000/api/_auth \
   -H 'content-type: application/json' \
-  -d '{"nombre":"ada","clave":"yourpassword"}'
+  -d '{"username":"ada","password":"yourpassword"}'
 ```
 
 Returns `{"token": "...", ...}`, grab it, and:
@@ -57,7 +57,7 @@ Returns `{"token": "...", ...}`, grab it, and:
 ```bash
 TOKEN=$(curl -s -X POST localhost:3000/api/_auth \
   -H 'content-type: application/json' \
-  -d '{"nombre":"ada","clave":"yourpassword"}' | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')
+  -d '{"username":"ada","password":"yourpassword"}' | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')
 ```
 
 ### Make authenticated requests

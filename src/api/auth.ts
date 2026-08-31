@@ -12,7 +12,7 @@ import { wrap } from './handler.js';
 export const AUTH = '_auth';
 
 /** The cookie the browser holds. */
-const COOKIE = 'sesion';
+const COOKIE = 'session';
 
 // Attach principal (logged-in user) to the request, if any.
 declare module 'express-serve-static-core' {
@@ -44,7 +44,7 @@ const decoded = (raw: string): string => {
 /** The token may arrive in two supported ways:
  * 
  * - The `Authorization` header, as a Bearer token. Esp. good for curl, the ops script, and tests.
- * - The `sesion` cookie, which the browser holds and sends automatically. */
+ * - The `session` cookie, which the browser holds and sends automatically. */
 const transports: ((req: Request) => string | undefined)[] = [
 	req => /^Bearer +(\S+)$/i.exec(req.get('authorization') ?? '')?.[1],
 	req => cookies(req)[COOKIE],
@@ -91,21 +91,21 @@ export const login = (auth: Authenticator, config: AppConfig): RequestHandler =>
 
 		if (old) await auth.logout(old);
 
-		const issued = await auth.login(String(given.nombre), String(given.clave));
+		const issued = await auth.login(String(given.username), String(given.password));
 
-		if (!issued) throw new HttpError(401, 'usuario o contraseña incorrectos');
+		if (!issued) throw new HttpError(401, 'invalid username or password');
 
 		res.cookie(COOKIE, issued.token, cookieOptions(config));
 
 		// The token goes back for clients with no cookie jar, ignored by browsers
-		res.json({ token: issued.token, expira: issued.expira, usuario: issued.principal });
+		res.json({ token: issued.token, expiresAt: issued.expiresAt, user: issued.principal });
 	});
 
 /** `GET`/`DELETE /api/_auth`
  * Mounted *after* the gate so it inherits the principal. */
 export const sessionRouter = (auth: Authenticator, config: AppConfig): Router =>
 	Router()
-		.get('/', (req, res) => { res.json({ usuario: req.principal }); })
+		.get('/', (req, res) => { res.json({ user: req.principal }); })
 		.delete('/', wrap(async (req, res) => {
 			const token = presented(req);
 

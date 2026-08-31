@@ -6,31 +6,31 @@ import { byId } from './dom.js';
 const AUTH = '/api/_auth';
 
 export interface Session {
-	nombre: string;
-	esAdmin: boolean;
+	username: string;
+	isAdmin: boolean;
 }
 
 const el = <T extends HTMLElement>(id: string) => byId(id) as T;
 
 const view = byId('login'),
 	form = el<HTMLFormElement>('login-form'),
-	nombre = el<HTMLInputElement>('login-nombre'),
-	clave = el<HTMLInputElement>('login-clave'),
+	username = el<HTMLInputElement>('login-username'),
+	password = el<HTMLInputElement>('login-password'),
 	submit = el<HTMLButtonElement>('login-submit'),
 	problem = byId('login-error'),
 	account = byId('account'),
-	who = byId('account-name'),
+	who = byId('account-username'),
 	out = el<HTMLButtonElement>('logout');
 
 /** The frontend token is an httpOnly cookie.
  * The browser attaches this to each request, the page can never read it. */
-const whoami = () => api<{ usuario: Session }>(AUTH).then(r => r.usuario);
+const whoami = () => api<{ user: Session }>(AUTH).then(r => r.user);
 
 // Logging out (or session dying) just reloads the whole page.
 const restart = () => location.reload();
 
 const signedIn = (session: Session): Session => {
-	who.textContent = session.nombre;
+	who.textContent = session.username;
 	account.hidden = false;
 	view.hidden = true;
 
@@ -42,21 +42,21 @@ const attempt = async (accept: (s: Session) => void): Promise<void> => {
 	submit.disabled = true;
 
 	try {
-		const { usuario } = await api<{ usuario: Session }>(AUTH,
-			sending('POST', { nombre: nombre.value, clave: clave.value }));
+		const { user } = await api<{ user: Session }>(AUTH,
+			sending('POST', { username: username.value, password: password.value }));
 
-		clave.value = '';				// remove password from the DOM for security
-		accept(signedIn(usuario));
+		password.value = '';				// remove password from the DOM for security
+		accept(signedIn(user));
 	} catch (err) {
 		problem.textContent = (err as Error).message;
 		problem.hidden = false;
-		clave.select();
+		password.select();
 	} finally {
 		submit.disabled = false;
 	}
 };
 
-/** Resolves only once the user is authenticated. 
+/** Resolves only once the user is authenticated.
  * `main()` awaits this. */
 export async function authenticated(): Promise<Session> {
 	const existing = await whoami().catch(() => null);
@@ -64,7 +64,7 @@ export async function authenticated(): Promise<Session> {
 	if (existing) return signedIn(existing);
 
 	view.dataset.state = 'asking';
-	nombre.focus();
+	username.focus();
 
 	return new Promise<Session>(accept => {
 		form.addEventListener('submit', e => { e.preventDefault(); void attempt(accept); });

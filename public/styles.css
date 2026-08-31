@@ -588,7 +588,7 @@ td.bad input { outline-color: var(--bad); }		/* refused, and still on screen to 
 }
 #account[hidden] { display: none; }		/* `display: flex` would otherwise outvote the attribute */
 
-#account-name {
+#account-username {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;

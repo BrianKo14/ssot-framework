@@ -16,7 +16,7 @@
 
 	<!-- Who is signed in, and the way out. Revealed once there is a session. -->
 	<div id="account" hidden>
-		<span id="account-name"></span>
+		<span id="account-username"></span>
 		<button id="logout" type="button">Salir</button>
 	</div>
 </aside>
@@ -57,11 +57,11 @@
 		<h1 id="login-title">ssot-framework</h1>
 		<p id="login-intro">Iniciá sesión para ver las entidades.</p>
 
-		<label for="login-nombre">Usuario</label>
-		<input id="login-nombre" name="nombre" autocomplete="username" required>
+		<label for="login-username">Usuario</label>
+		<input id="login-username" name="username" autocomplete="username" required>
 
-		<label for="login-clave">Contraseña</label>
-		<input id="login-clave" name="clave" type="password" autocomplete="current-password" required>
+		<label for="login-password">Contraseña</label>
+		<input id="login-password" name="password" type="password" autocomplete="current-password" required>
 
 		<button id="login-submit" type="submit">Entrar</button>
 		<p id="login-error" role="alert" hidden></p>

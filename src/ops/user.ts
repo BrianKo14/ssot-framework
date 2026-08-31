@@ -9,19 +9,19 @@ import { dbAuthenticator, type UserProfile } from '../auth/store.js';
 import { loadConfig } from '../config.js';
 import { connect, type Db } from '../db/postgres.js';
 
-const USAGE = 'usage: npm run auth:user -- <nombre> [--admin] [--inactive] [--email <e>] [--no-password]';
+const USAGE = 'usage: npm run auth:user -- <username> [--admin] [--inactive] [--email <e>] [--no-password]';
 
 const FLAGS = new Map<string, UserProfile>([
-	['--admin', { esAdmin: true }],
-	['--no-admin', { esAdmin: false }],
-	['--active', { activo: true }],
-	['--inactive', { activo: false }],
+	['--admin', { isAdmin: true }],
+	['--no-admin', { isAdmin: false }],
+	['--active', { active: true }],
+	['--inactive', { active: false }],
 ]);
 
-interface Args { nombre: string; profile: UserProfile; setPassword: boolean }
+interface Args { username: string; profile: UserProfile; setPassword: boolean }
 
 function parse(argv: string[]): Args {
-	let nombre: string | undefined;
+	let username: string | undefined;
 	let profile: UserProfile = {};
 	let setPassword = true;
 
@@ -33,14 +33,14 @@ function parse(argv: string[]): Args {
 		if (arg === '--no-password') { setPassword = false; continue; }
 		if (arg === '--email') { profile = { ...profile, email: argv[++i] ?? null }; continue; }
 		if (arg.startsWith('--')) throw new Error(`unknown option ${arg}\n${USAGE}`);
-		if (nombre !== undefined) throw new Error(`give exactly one user name\n${USAGE}`);
+		if (username !== undefined) throw new Error(`give exactly one user name\n${USAGE}`);
 
-		nombre = arg;
+		username = arg;
 	}
 
-	if (nombre === undefined) throw new Error(USAGE);
+	if (username === undefined) throw new Error(USAGE);
 
-	return { nombre, profile, setPassword };
+	return { username, profile, setPassword };
 }
 
 async function readPassword(): Promise<string> {
@@ -48,7 +48,7 @@ async function readPassword(): Promise<string> {
 
 	if (fromEnv) return fromEnv;
 
-	if (process.stdin.isTTY) process.stdout.write('Contraseña: ');
+	if (process.stdin.isTTY) process.stdout.write('Password: ');
 
 	const lines = createInterface({ input: process.stdin });
 
@@ -70,14 +70,14 @@ async function waitForDb(url: string, attempts = 20): Promise<Db> {
 }
 
 async function main(): Promise<void> {
-	const { nombre, profile, setPassword } = parse(process.argv.slice(2));
+	const { username, profile, setPassword } = parse(process.argv.slice(2));
 	const config = loadConfig();
-	const clave = setPassword ? await readPassword() : undefined;
+	const password = setPassword ? await readPassword() : undefined;
 	const db = await waitForDb(config.databaseUrl);
 
 	try {
-		await dbAuthenticator(db, config.sessionTtl).saveUser(nombre, profile, clave);
-		console.log(`usuario "${nombre}" guardado${clave === undefined ? ' (contraseña sin cambios)' : ''}`);
+		await dbAuthenticator(db, config.sessionTtl).saveUser(username, profile, password);
+		console.log(`user "${username}" saved${password === undefined ? ' (password unchanged)' : ''}`);
 	} finally {
 		await db.close();
 	}

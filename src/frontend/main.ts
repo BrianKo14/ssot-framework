@@ -1,4 +1,6 @@
 import type { ColumnMeta, SystemMeta, TableMeta } from '../shared/api.js';
+import { api, sending } from './api.js';
+import { authenticated, sessionEnded } from './auth.js';
 import { byId, el } from './dom.js';
 import { filterBar, type FilterBar } from './filters.js';
 
@@ -31,18 +33,6 @@ const blank = () => { grid.hidden = true; emptyNote.hidden = true; editing?.canc
 
 
 // --- API ---
-
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
-	const res = await fetch(path, init);
-	const body = await res.json();
-
-	if (!res.ok) throw new Error(typeof body?.error === 'string' ? body.error : res.statusText);
-
-	return body as T;
-}
-
-const sending = (method: string, body: unknown): RequestInit =>
-	({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 /** A row's pk values, in declaration order. */
 const key = (t: TableMeta, row: Row) => t.pk.map(k => String(row[k]));
@@ -235,6 +225,8 @@ function edit(t: TableMeta, row: Row, c: ColumnMeta, td: HTMLTableCellElement): 
 			refreshPeek(row);
 			say(summary(t));
 		} catch (err) {
+			if (sessionEnded(err)) { location.reload(); return; }
+
 			settled = false;		// still on screen and still refused: let it be fixed
 			input.disabled = false;
 			input.focus();
@@ -308,13 +300,20 @@ async function show(name: string): Promise<void> {
 	await load(t);
 }
 
-const fail = (err: Error) => { blank(); say(err.message, 'error'); };
+const fail = (err: Error) => {
+	if (sessionEnded(err)) { location.reload(); return; }
+
+	blank();
+	say(err.message, 'error');
+};
 
 const route = () => void show(current()).catch(fail);
 const refilter = () => { if (screen) void load(screen).catch(fail); };
 
 
 async function main(): Promise<void> {
+	await authenticated();			// nothing below this runs until there is a session
+
 	let meta: SystemMeta;
 
 	try {

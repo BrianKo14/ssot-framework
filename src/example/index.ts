@@ -1,5 +1,4 @@
-import { defineEntities, defineEntity, type RecordDef } from 'system-definition';
-import { tablesFrom, typeCollectionOf } from '../schema/build.js';
+import { defineEntities, defineEntity, type RecordDef, tablesFrom, typeCollectionOf } from '../schema/build.js';
 import { serve } from '../serve.js';
 import { commonTypes, text } from '../types/builtin.js';
 

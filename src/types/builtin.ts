@@ -76,6 +76,7 @@ export const interval: TypeHandler<string> = textual('a duration (ISO-8601, e.g.
 
 
 
+// ==> Common types export
 
 export const commonTypes = {
 	text: text(),
@@ -87,3 +88,23 @@ export const commonTypes = {
 	time,
 	interval,
 };
+
+
+// --- Secrets ---
+
+/** A password as it was typed */
+export const password = (min = 8, max = 200): TypeHandler<string> =>
+	typeOf(`a password of ${min} to ${max} characters`, raw => {
+		if (typeof raw !== 'string') return undefined;
+
+		const length = [...raw].length;			// code points, as `text` counts them
+
+		return length >= min && length <= max ? raw : undefined;
+	});
+
+/** A session token as it is written on the wire */
+export const TOKEN_BYTES = 32;
+export const token: TypeHandler<string> = textual('a session token', /^[A-Za-z0-9_-]{43}$/);
+
+/** A SHA-256 digest in hex (how session tokens are stored) */
+export const digest: TypeHandler<string> = textual('a hex digest', /^[0-9a-f]{64}$/);

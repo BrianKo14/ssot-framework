@@ -13,6 +13,12 @@
 	<h1>ssot-framework</h1>
 	<h2>Entidades</h2>
 	<nav id="entities"></nav>
+
+	<!-- Who is signed in, and the way out. Revealed once there is a session. -->
+	<div id="account" hidden>
+		<span id="account-name"></span>
+		<button id="logout" type="button">Salir</button>
+	</div>
 </aside>
 
 <main>
@@ -43,6 +49,23 @@
 		<button id="peek-close" type="button" title="Cerrar" aria-label="Cerrar"></button>
 	</header>
 	<dl id="peek-fields"></dl>
+</section>
+
+<!-- Login screen -->
+<section id="login" data-state="checking" aria-labelledby="login-title">
+	<form id="login-form">
+		<h1 id="login-title">ssot-framework</h1>
+		<p id="login-intro">Iniciá sesión para ver las entidades.</p>
+
+		<label for="login-nombre">Usuario</label>
+		<input id="login-nombre" name="nombre" autocomplete="username" required>
+
+		<label for="login-clave">Contraseña</label>
+		<input id="login-clave" name="clave" type="password" autocomplete="current-password" required>
+
+		<button id="login-submit" type="submit">Entrar</button>
+		<p id="login-error" role="alert" hidden></p>
+	</form>
 </section>
 
 <script type="module" src="/main.js"></script>

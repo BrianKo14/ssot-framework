@@ -1,10 +1,12 @@
 // Translates EntityDef (schema author's vocabulary) to TableInfo (backend facts).
-// The one framework file that imports `system-definition`: nothing else in `src/` may, and
-// nothing else depends on this one, so a breaking change upstream stops here.
+// This is the one framwework file that imports `system-definition`.
 
 import { boxType, completeEntity, type EntityDef, type EntityInfo, type TypeCollection } from 'system-definition';
 import type { TypeCollectionOf, TypeHandlers } from '../types/handler.js';
 import type { ColumnInfo, Columns, ReferenceInfo, TableInfo } from './model.js';
+
+export { defineEntities, defineEntity } from 'system-definition';
+export type { EntityDef, FieldDef, RecordDef, TypeCollection } from 'system-definition';
 
 /** The descriptive TypeCollection implied by a set of handlers */
 export const typeCollectionOf = <H extends TypeHandlers>(handlers: H): TypeCollectionOf<H> =>

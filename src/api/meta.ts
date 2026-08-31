@@ -18,10 +18,9 @@ const systemMeta = (tables: TableInfo[]): SystemMeta =>
 	({ tables: tables.map(tableMeta), operators: operatorMeta });
 
 
+/** The name collision check that used to live here now covers every reserved name at once, in
+ * `buildApp` — `_meta` is no longer the only one the framework claims. */
 export function metaRouter(tables: TableInfo[]): Router {
-	if (tables.some(t => t.table === META))
-		throw new Error(`entity "${META}" collides with the metadata endpoint /api/${META}`);
-
 	const meta = systemMeta(tables);
 	return Router().get('/', (_req, res) => { res.json(meta); });
 }

@@ -39,7 +39,8 @@ export async function connect(databaseUrl: string): Promise<Db> {
     // Instead, we read the text of every column as a string and let the type handlers read it.
     types: { getTypeParser: () => (value: string) => value },
 
-    options: '-c datestyle=ISO,YMD -c intervalstyle=iso_8601',    // e.g. '2026-08-25'
+    // Set format standards for the sessions
+    options: '-c datestyle=ISO,YMD -c intervalstyle=iso_8601 -c timezone=UTC',
   });
 
   await pool.query('select 1');          		       		            // runs a trivial test query

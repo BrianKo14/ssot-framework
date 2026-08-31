@@ -3,13 +3,9 @@ import type { Db } from '../db/postgres.js';
 import { equalities, filterConditions, parseFilter, where } from '../sql/filter.js';
 import { HttpError } from '../errors.js';
 import type { ColumnInfo, ReferenceInfo, TableInfo } from '../schema/model.js';
-import { q } from '../sql/identifier.js';
+import { columnList, q } from '../sql/identifier.js';
 import { asRecord, checkedValues, namedColumns, rowValues } from '../schema/values.js';
-
-/** Wraps route handler to reroute errors to the error handling middleware instead of crashing the process.
- * Technically, Express 5 will handle this. Keeping it to make control flow explicit. */
-const wrap = (h: RequestHandler): RequestHandler =>
-	(req, res, next) => { void Promise.resolve(h(req, res, next)).catch(next); };
+import { wrap } from './handler.js';
 
 
 
@@ -41,9 +37,9 @@ export const isNestable = (ref: ReferenceInfo) =>
 export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router {
 	const r = Router({ mergeParams: true });		// `mergeParams` lets the detail's router see the master's path parameters
 
-	const cols = t.columns.map(c => q(c.name)).join(', ');
+	const cols = columnList(t.columns);
 	const table = q(t.table);
-	const pkCols = t.pk.map(c => q(c.name)).join(', ');
+	const pkCols = columnList(t.pk);
 
 	const pkParams = keyParams('pk', t.pk);
 	const byPk = segments(pkParams);
@@ -123,7 +119,7 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 		const ph = given.map((_, i) => `$${i + 1}`).join(', '); 	            // build "$1, $2, ..." placeholders for the query
 
 		const rows = await db.query(
-			`insert into ${table} (${given.map(c => q(c.name)).join(', ')}) values (${ph}) returning ${cols}`,
+			`insert into ${table} (${columnList(given)}) values (${ph}) returning ${cols}`,
 			given.map(c => values[c.name])
 		);
 

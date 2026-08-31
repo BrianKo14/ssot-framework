@@ -1,12 +1,9 @@
-// The model every generator downstream reads: what a table, a column and a reference are.
-// Nothing here knows how a definition is written (see `build.ts`) nor how SQL is spelled.
+// Model for the schema generator: what a table, column, reference, etc., is
 
+import type { Capability } from '../shared/api.js';
 import type { TypeHandler } from '../types/handler.js';
 
-/** What the SQL layer needs to know about one column.
- * `typeName` rides along beside the resolved handler because a handler is aliasable — one object
- * can be reachable under two names — so the name cannot live on the handler, and SCOPE(3)'s
- * schema generator needs it to pick a SQL type. */
+
 export interface ColumnInfo {
 	name: string;
 	typeName: string;
@@ -14,8 +11,13 @@ export interface ColumnInfo {
 	type: TypeHandler<any>;
 }
 
-/** A table's columns by name. Built once here, so nothing downstream rebuilds it. */
+/** A table's columns by name. */
 export type Columns = ReadonlyMap<string, ColumnInfo>;
+
+
+/** Role -> set of capabilities. */
+export type Access = ReadonlyMap<string, ReadonlySet<Capability>>;
+
 
 /** One foreign key, with source / target columns resolved.
  *
@@ -41,4 +43,5 @@ export interface TableInfo {
 	byName: Columns;			// the same ColumnInfo objects, indexed
 	references: ReferenceInfo[];		// fks this table declares
 	details: ReferenceInfo[];		// fks *into* this table from tables that are details of it
+	access: Access;				// who may do what here; see `schema/access.ts`
 }

@@ -6,6 +6,7 @@ import type { ColumnInfo, ReferenceInfo, TableInfo } from '../schema/model.js';
 import { columnList, q } from '../sql/identifier.js';
 import { asRecord, checkedValues, namedColumns, rowValues } from '../schema/values.js';
 import { wrap } from './handler.js';
+import { permit } from './permission.js';
 
 
 
@@ -35,7 +36,9 @@ export const isNestable = (ref: ReferenceInfo) =>
 /** Generic CRUD router factory.
  * @param master when this table is mounted as a detail, the reference it was mounted through. */
 export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router {
-	const r = Router({ mergeParams: true });		// `mergeParams` lets the detail's router see the master's path parameters
+	const r = Router({ mergeParams: true });	// `mergeParams` lets the detail's router see the master's path parameters
+
+	r.use(permit(t));				// first thing: authorization gate
 
 	const cols = columnList(t.columns);
 	const table = q(t.table);

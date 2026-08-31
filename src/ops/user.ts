@@ -9,11 +9,9 @@ import { dbAuthenticator, type UserProfile } from '../auth/store.js';
 import { loadConfig } from '../config.js';
 import { connect, type Db } from '../db/postgres.js';
 
-const USAGE = 'usage: npm run auth:user -- <username> [--admin] [--inactive] [--email <e>] [--no-password]';
+const USAGE = 'usage: npm run auth:user -- <username> [--role <r>] [--inactive] [--email <e>] [--no-password]';
 
 const FLAGS = new Map<string, UserProfile>([
-	['--admin', { isAdmin: true }],
-	['--no-admin', { isAdmin: false }],
 	['--active', { active: true }],
 	['--inactive', { active: false }],
 ]);
@@ -32,6 +30,14 @@ function parse(argv: string[]): Args {
 		if (flag) { profile = { ...profile, ...flag }; continue; }
 		if (arg === '--no-password') { setPassword = false; continue; }
 		if (arg === '--email') { profile = { ...profile, email: argv[++i] ?? null }; continue; }
+		if (arg === '--role') {
+			const role = argv[++i];
+
+			if (role === undefined) throw new Error(`--role needs a value\n${USAGE}`);
+
+			profile = { ...profile, role };
+			continue;
+		}
 		if (arg.startsWith('--')) throw new Error(`unknown option ${arg}\n${USAGE}`);
 		if (username !== undefined) throw new Error(`give exactly one user name\n${USAGE}`);
 

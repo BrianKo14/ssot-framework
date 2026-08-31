@@ -588,12 +588,22 @@ td.bad input { outline-color: var(--bad); }		/* refused, and still on screen to 
 }
 #account[hidden] { display: none; }		/* `display: flex` would otherwise outvote the attribute */
 
-#account-username {
+#account-who {
+	display: grid;				/* name over role; `grid` is what makes both children clip */
+	min-width: 0;
+}
+
+#account-username,
+#account-role {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	color: var(--muted);
 }
+
+#account-username { color: var(--muted); }
+
+/* The role decides what the rail lists and whether a cell opens, so it is worth reading. */
+#account-role { font-size: .75rem; color: var(--faint); }
 
 #logout {
 	flex: none;

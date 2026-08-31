@@ -108,3 +108,10 @@ export const token: TypeHandler<string> = textual('a session token', /^[A-Za-z0-
 
 /** A SHA-256 digest in hex (how session tokens are stored) */
 export const digest: TypeHandler<string> = textual('a hex digest', /^[0-9a-f]{64}$/);
+
+
+// --- Access ---
+
+/** A role name, as used in the application's access policy. */
+export const role: TypeHandler<string> = textual('a role name (lowercase, e.g. "admin")',
+	/^[a-z][a-z0-9_]{0,59}$/);

@@ -7,7 +7,7 @@ const AUTH = '/api/_auth';
 
 export interface Session {
 	username: string;
-	isAdmin: boolean;
+	role: string;
 }
 
 const el = <T extends HTMLElement>(id: string) => byId(id) as T;
@@ -20,6 +20,7 @@ const view = byId('login'),
 	problem = byId('login-error'),
 	account = byId('account'),
 	who = byId('account-username'),
+	asRole = byId('account-role'),
 	out = el<HTMLButtonElement>('logout');
 
 /** The frontend token is an httpOnly cookie.
@@ -31,6 +32,7 @@ const restart = () => location.reload();
 
 const signedIn = (session: Session): Session => {
 	who.textContent = session.username;
+	asRole.textContent = session.role;		// what is on screen follows from this, so it is shown
 	account.hidden = false;
 	view.hidden = true;
 

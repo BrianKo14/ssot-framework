@@ -13,10 +13,15 @@
 -- generates (`sql/identifier.ts`'s `q()`) for exactly this class of case, so a reserved word as
 -- a table name is a feature to demonstrate, not a name to avoid.
 
+-- `role` carries no default and no fk. No default, because every default would be a grant and
+-- Requisito 3 says a user holds no more permission than they were given. No fk, because what a
+-- role *means* is stated once in the application's access policy; a `role` table here would be a
+-- second list of role names, free to disagree with it. A role the policy does not name holds no
+-- capabilities, so an unrecognised one is refused everything rather than allowed anything.
 create table "user" (
   username  varchar(60)  not null,
   email     text,
-  is_admin  boolean      not null default false,
+  role      varchar(60)  not null,
   active    boolean      not null default true,
   constraint user_pk primary key (username)
 );

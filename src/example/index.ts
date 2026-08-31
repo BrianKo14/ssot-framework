@@ -1,3 +1,4 @@
+import { type AccessDef, CAPABILITIES } from '../schema/access.js';
 import { defineEntities, defineEntity, type RecordDef, tablesFrom, typeCollectionOf } from '../schema/build.js';
 import { serve } from '../serve.js';
 import { commonTypes, text } from '../types/builtin.js';
@@ -47,4 +48,10 @@ const entityDefs = defineEntities({
 	}),
 });
 
-await serve(tablesFrom(entityDefs, types));
+const access = {
+	cliente: { admin: CAPABILITIES, recepcion: ['read', 'create'] },
+	reserva: { admin: CAPABILITIES, recepcion: CAPABILITIES, cocina: ['read'] },
+	item: { admin: CAPABILITIES, recepcion: CAPABILITIES, cocina: ['read'] },
+} satisfies AccessDef<typeof entityDefs>;
+
+await serve(tablesFrom(entityDefs, types, access));

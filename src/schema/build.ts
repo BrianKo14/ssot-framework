@@ -2,7 +2,9 @@
 // This is the one framwework file that imports `system-definition`.
 
 import { boxType, completeEntity, type EntityDef, type EntityInfo, type TypeCollection } from 'system-definition';
+import type { Capability } from '../shared/api.js';
 import type { TypeCollectionOf, TypeHandlers } from '../types/handler.js';
+import { accessOf, type AccessDef } from './access.js';
 import type { ColumnInfo, Columns, ReferenceInfo, TableInfo } from './model.js';
 
 export { defineEntities, defineEntity } from 'system-definition';
@@ -26,7 +28,12 @@ const namedColumn = (columns: Columns, where: string) => (name: string): ColumnI
  * 
  * Resolving type names here (once, at startup) is what lets every request path assume its
  * column has a handler: an unrecognised type is a boot failure, not a per-request branch. */
-function tableInfo(entityName: string, info: EntityInfo<TypeCollection>, handlers: TypeHandlers): TableInfo {
+function tableInfo(
+	entityName: string,
+	info: EntityInfo<TypeCollection>,
+	handlers: TypeHandlers,
+	granted: Readonly<Record<string, readonly Capability[]>> | undefined,
+): TableInfo {
 	const columns = Object.entries(info.fields).map(([name, field]): ColumnInfo => {
 		const typeName = String(field.type);
 		const type = handlers[typeName];
@@ -48,6 +55,7 @@ function tableInfo(entityName: string, info: EntityInfo<TypeCollection>, handler
 		byName,
 		references: [],				// filled by linkReferences, later once every table exists
 		details: [],
+		access: accessOf(entityName, granted),
 	};
 }
 
@@ -84,18 +92,36 @@ function linkReferences(from: TableInfo, fks: EntityInfo<TypeCollection>['fks'],
 
 /** Maps a whole system definition to its tables.
  * @param entityDefs the entities of the system, keyed by entity name
- * @param handlers the system's domain types, the same set `typeCollectionOf` described */
-export function tablesFrom(entityDefs: Record<string, EntityDef<TypeCollection>>, handlers: TypeHandlers): TableInfo[] {
+ * @param handlers the system's domain types, the same set `typeCollectionOf` described
+ * @param access who may do what to each entity. Omitted, every table denies everyone: a system
+ * served with no stated policy exposes nothing, rather than everything. */
+export function tablesFrom<TEntities extends Record<string, EntityDef<TypeCollection>>>(
+	entityDefs: TEntities,
+	handlers: TypeHandlers,
+	access: AccessDef<TEntities> = {},
+): TableInfo[] {
+
+	// The access object is: entity name -> capability -> list of roles
+	const granted = access as Readonly<Record<string, Readonly<Record<string, readonly Capability[]>>>>;
+
+
+	// --- Build the table ---
 
 	// 1. Def -> Info (fills in the defaults: nullable, label, ...)
 	const completed: [string, EntityInfo<TypeCollection>][] =
 		Object.entries(entityDefs).map(([name, def]) => [name, completeEntity(def)]);
 
-	// 2. Info -> TableInfo (resolves type names to handlers, builds column maps, etc.)
-	const tables = new Map(completed.map(([name, info]) => [name, tableInfo(name, info, handlers)]));
+	// 2. Info -> TableInfo (resolves type names to handlers, builds column maps, merges access)
+	const tables = new Map(completed.map(([name, info]) =>
+		[name, tableInfo(name, info, handlers, granted[name])]));
 
 	// 3. Resolve fks (needs every table to exist first)
 	for (const [name, info] of completed) linkReferences(tables.get(name)!, info.fks, tables);
+
+	// 4. Reject access rules for entities that don't exist
+	for (const name of Object.keys(granted))
+		if (!tables.has(name)) throw new Error(`access names unknown entity "${name}"`);
+
 
 	return [...tables.values()];
 }

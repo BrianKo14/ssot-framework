@@ -13,7 +13,7 @@ import { digestOf, dummyHash, hashPassword, mintToken, verifyPassword } from './
 /** Who is making the request. */
 export interface Principal {
 	username: string;
-	isAdmin: boolean;
+	role: string;
 }
 
 /** A token that has been issued to a user. */
@@ -25,7 +25,7 @@ export interface Issued {
 
 export interface UserProfile {
 	email?: string | null;
-	isAdmin?: boolean;
+	role?: string;
 	active?: boolean;
 }
 
@@ -42,7 +42,7 @@ export interface Authenticator {
 
 const   U_USERNAME = col(userTable, 'username'),
 	U_EMAIL = col(userTable, 'email'),
-	U_IS_ADMIN = col(userTable, 'is_admin'),
+	U_ROLE = col(userTable, 'role'),
 	U_ACTIVE = col(userTable, 'active');
 
 const   C_USER = col(credentialTable, 'user'),
@@ -53,7 +53,7 @@ const   S_TOKEN = col(sessionTable, 'token'),
 	S_CREATED_AT = col(sessionTable, 'created_at'),
 	S_EXPIRES_AT = col(sessionTable, 'expires_at');
 
-const USER_COLUMNS = [U_USERNAME, U_EMAIL, U_IS_ADMIN, U_ACTIVE];
+const USER_COLUMNS = [U_USERNAME, U_EMAIL, U_ROLE, U_ACTIVE];
 
 
 // --- The authenticator ---
@@ -81,7 +81,7 @@ export function dbAuthenticator(db: Db, sessionTtl: string): Authenticator & {
 	}
 
 	const principalOf = (row: Record<string, unknown>): Principal =>
-		({ username: String(row[U_USERNAME.name]), isAdmin: row[U_IS_ADMIN.name] === true });
+		({ username: String(row[U_USERNAME.name]), role: String(row[U_ROLE.name]) });
 
 	async function storedHash(username: unknown): Promise<string | null> {
 		const params: unknown[] = [];
@@ -175,9 +175,7 @@ export function dbAuthenticator(db: Db, sessionTtl: string): Authenticator & {
 			await db.query(`delete from ${q(sessionTable.table)}${where(conds)}`, params);
 		},
 
-		/** Create / updates a user.
-		 *
-		 * TODO: This is used by the ops script, no HTTP yet (requires authorization rules). */
+		/** Create / updates a user. */
 		async saveUser(username, profile, password) {
 
 			const existing = await activeUser(username) ?? await (async () => {
@@ -188,10 +186,14 @@ export function dbAuthenticator(db: Db, sessionTtl: string): Authenticator & {
 				return row ?? null;
 			})();
 
+			const role = profile.role ?? existing?.[U_ROLE.name];	// no default role
+
+			if (role === undefined) throw new Error(`new user "${username}" needs a role`);
+
 			const values = checkedValues(USER_COLUMNS, {
 				[U_USERNAME.name]: username,
 				[U_EMAIL.name]: profile.email ?? existing?.[U_EMAIL.name] ?? null,
-				[U_IS_ADMIN.name]: profile.isAdmin ?? existing?.[U_IS_ADMIN.name] ?? false,
+				[U_ROLE.name]: role,
 				[U_ACTIVE.name]: profile.active ?? existing?.[U_ACTIVE.name] ?? true,
 			}, true);
 

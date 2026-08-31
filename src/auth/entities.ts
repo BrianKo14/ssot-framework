@@ -2,13 +2,14 @@
 
 import { defineEntities, defineEntity, type RecordDef, tablesFrom, typeCollectionOf } from '../schema/build.js';
 import type { ColumnInfo, TableInfo } from '../schema/model.js';
-import { commonTypes, digest, password as passwordType, text } from '../types/builtin.js';
+import { commonTypes, digest, password as passwordType, role, text } from '../types/builtin.js';
 
 const authTypes = {
 	...commonTypes,
 	username: text(60),		// login identifier
 	secret: text(200),		// PHC-format scrypt hash
 	digest,				// SHA-256 of a session token, see `digestOf` in `hash.ts`
+	role,				// what the access policy grants against, see `schema/access.ts`
 };
 
 const typeDefs = typeCollectionOf(authTypes);
@@ -16,13 +17,13 @@ const typeDefs = typeCollectionOf(authTypes);
 const entityDefs = defineEntities({
 
 	/** User's identity and profile.
-	 * Hold no secrets, so one could mount this entity to the screen later.*/
+	 * Hold no secrets, so one could mount this entity to the screen later. */
 	user: defineEntity({
 		pk: ['username'],
 		fields: {
 			username: { type: 'username', isName: true },
 			email: { type: 'text' },
-			is_admin: { type: 'boolean', nullable: false },
+			role: { type: 'role', nullable: false },
 			active: { type: 'boolean', nullable: false },
 		} satisfies RecordDef<typeof typeDefs>,
 		fks: {},

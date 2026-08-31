@@ -64,12 +64,11 @@ const shown = <K extends 'td' | 'dd'>(tag: K, value: unknown) => {
 
 const header = (t: TableMeta) => (c: ColumnMeta) => named(el('th', c.name, el('small', c.type)), t, c);
 
-/** A pk cell is not editable: the pk addresses the row, which is why `crudRouter`'s `updatable`
-    leaves it out too. Both sides read the same `pk`. */
 const cell = (t: TableMeta, row: Row) => (c: ColumnMeta) => {
 	const td = shown('td', row[c.name]);
 
-	if (t.pk.includes(c.name)) return td;
+	// If this cell is a pk, or user doesn't have update rights, it is not editable.
+	if (t.pk.includes(c.name) || !t.capabilities.includes('update')) return td;
 
 	td.classList.add('editable');
 	td.addEventListener('dblclick', () => edit(t, row, c, td));
@@ -325,7 +324,7 @@ async function main(): Promise<void> {
 
 	tables = meta.tables;
 
-	if (!tables.length) { say('El esquema no define ninguna entidad.'); return; }
+	if (!tables.length) { say('No hay entidades disponibles para este usuario.'); return; }
 
 	filters = filterBar(meta.operators, refilter);
 

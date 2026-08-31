@@ -18,46 +18,33 @@ This is the only way to create the first admin, there is no HTTP endpoint for it
 ### General form
 
 ```
-npm run auth:user -- <username> [--admin | --no-admin] [--active | --inactive] [--email <address>] [--no-password]
+npm run auth:user -- <username> [--role <role>] [--active | --inactive] [--email <address>] [--no-password]
 ```
 
 - `<username>` — the sole positional argument: the user to create or edit.
-- `--admin` / `--no-admin` — grant or revoke admin rights.
+- `--role <role>` — permission level type.
 - `--active` / `--inactive` — reactivate or deactivate. A deactivated user cannot
   log in and their existing sessions stop resolving.
 - `--email <address>` — set the email (omit the argument to clear it).
 - `--no-password` — edit the profile without reading or changing the password.
 
-Paired flags are last-wins. On an **existing** user, every field you don't pass
-keeps its current value. On a **new** user the defaults are `--no-admin`,
-`--active`, no email, and a password is mandatory — so don't pass `--no-password`,
-or the account is created with no way to log in.
+On an **existing** user, every field you don't pass keeps its current value.
+On a **new** user the defaults are `--active`, no email, a password is mandatory (`--no-password`
+means no way to log in), and  so is `--role`.
 
 ## Examples
 
 ### Create an admin
 
 ```bash
-AUTH_PASSWORD='yourpassword' npm run auth:user -- ada --admin --email ada@example.com
+AUTH_PASSWORD='yourpassword' npm run auth:user -- brian --role admin --email brian@example.com
 ```
 
-### Add a regular user
+### Add users with narrower roles
 
 ```bash
-AUTH_PASSWORD='yourpassword' npm run auth:user -- bob
+AUTH_PASSWORD='yourpassword' npm run auth:user -- emilio --role profesor
 ```
-
-### Other user management flags
-
-```bash
-npm run auth:user -- bob --inactive          # deactivate (kills their sessions immediately)
-npm run auth:user -- bob --active            # reactivate
-npm run auth:user -- bob --email new@x.com   # update email only
-npm run auth:user -- bob --no-password       # edit profile without touching the password
-```
-
-`--admin` / `--no-admin` toggle admin rights. Running the command again for an
-existing name updates just the fields you pass; the rest stay as they were.
 
 ## Using the API from the terminal
 

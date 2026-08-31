@@ -5,10 +5,15 @@ export interface ColumnMeta {
 	expected: string;	// e.g. "a date (YYYY-MM-DD)"
 }
 
+/** What a user may do to a table. */
+export type Capability = 'read' | 'create' | 'update' | 'delete';
+
 export interface TableMeta {
 	table: string;
 	pk: string[];		// column names, in declaration order
 	columns: ColumnMeta[];	// in declaration order; the order screens present them in
+	/** What *this* caller may do here. A table it cannot read is not sent at all. */
+	capabilities: Capability[];
 }
 
 export interface OperatorMeta {

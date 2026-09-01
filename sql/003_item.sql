@@ -10,3 +10,5 @@ create table item (
   constraint item_pk primary key (fecha, id, item),
   constraint item_reserva_fk foreign key (fecha, id) references reserva (fecha, id)
 );
+insert into item (fecha, id, item, descripcion, cantidad) values ('2026-01-01', 7, 1, 'Table for two', 1);
+insert into item (fecha, id, item, descripcion, cantidad) values ('2026-01-01', 7, 2, 'High chair', null);

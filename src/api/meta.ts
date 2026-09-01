@@ -2,7 +2,7 @@
 
 import { Router } from 'express';
 import type { ColumnMeta, SystemMeta, TableMeta } from '../shared/api.js';
-import { formatMeta } from '../format/index.js';
+import { formatMeta } from '../format/registry.js';
 import { operatorMeta } from '../sql/filter.js';
 import { allows, CAPABILITIES } from '../schema/access.js';
 import type { ColumnInfo, TableInfo } from '../schema/model.js';

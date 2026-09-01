@@ -5,7 +5,7 @@ import { HttpError } from '../errors.js';
 import type { ColumnInfo, ReferenceInfo, TableInfo } from '../schema/model.js';
 import { columnList, q } from '../sql/identifier.js';
 import { asRecord, checkedValues, namedColumns, rowValues } from '../schema/values.js';
-import { formatNamed } from '../format/index.js';
+import { formatNamed } from '../format/registry.js';
 import { sendAs, wrap } from './handler.js';
 import { permit } from './permission.js';
 

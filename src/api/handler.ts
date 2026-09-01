@@ -4,7 +4,7 @@ import type { ErrorRequestHandler, RequestHandler, Response } from 'express';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { HttpError } from '../errors.js';
-import type { Format, Sheet } from '../format/index.js';
+import type { Format, Sheet } from '../format/registry.js';
 
 /** Route handler wrapper to reroute errors to the error handling middleware. */
 export const wrap = (h: RequestHandler): RequestHandler =>

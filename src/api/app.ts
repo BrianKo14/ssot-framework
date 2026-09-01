@@ -13,6 +13,9 @@ import type { TableInfo } from '../schema/model.js';
 /** The static files directory for the frontend. */
 const PUBLIC_DIR = path.join(import.meta.dirname, '..', '..', 'public');
 
+/** URLs handled by the frontend. */
+const SCREEN = /^(?!\/api(\/|$))/;
+
 /** Reserved entity names. */
 const RESERVED = new Set([META, AUTH, ...authTables.map(t => t.table)]);
 
@@ -54,10 +57,17 @@ export function buildApp(db: Db, tables: TableInfo[], auth: Authenticator, confi
 	app.use('/api', entityRouter(db, tables));
 
 	// --> 7. Frontend
-	app.use(express.static(PUBLIC_DIR));					// must go after /api; serves the login page anonymously
+	app.use(express.static(PUBLIC_DIR));						// must go after /api; serves the login page anonymously
 
-	// --> 8. Error handling
-	app.use(onError);							// must go last
+	// --> 8. Deep links
+	app.get(SCREEN, (req, res, next) => {
+		if (req.accepts(['*/*', 'html']) !== 'html') { next(); return; }
+
+		res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+	});
+
+	// --> 9. Error handling
+	app.use(onError);								// must go last
 
 	return app;
 }

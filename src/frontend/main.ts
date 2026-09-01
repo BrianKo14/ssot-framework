@@ -3,6 +3,7 @@ import { api, sending } from './api.js';
 import { authenticated, sessionEnded } from './auth.js';
 import { byId, el } from './dom.js';
 import { filterBar, type FilterBar } from './filters.js';
+import { router, same, type Router, type View } from './route.js';
 
 type Row = Record<string, unknown>;
 
@@ -125,8 +126,9 @@ const summary = (t: TableMeta) =>
 
 // --- Row peek ---
 
-/** The open row, and the button that opened it, so the row stays marked. */
-let opened: { button: HTMLButtonElement; t: TableMeta; row: Row } | null = null;
+/** The open row: the button that opened it, so the row stays marked, and its key, so the
+    address can name it and a redraw can find it again. */
+let opened: { button: HTMLButtonElement; t: TableMeta; row: Row; key: string[] } | null = null;
 
 /** @param restore give the focus back to the row — for a close the user asked for, not for one
     the screen did on its way to replacing that row anyway. */
@@ -135,8 +137,14 @@ const closePeek = (restore = false) => {
 
 	if (restore) opened?.button.focus();
 
+	const was = opened !== null;
+
 	opened = null;
 	peek.hidden = true;
+
+	// A close the user asked for is a move, so the address stops naming the record. A close the
+	// screen did is not: it is on its way to drawing whatever the address already says.
+	if (restore && was) route.mark(here());
 };
 
 const dismissPeek = () => closePeek(true);
@@ -152,17 +160,25 @@ const fillPeek = () => {
 	peekFields.replaceChildren(...t.columns.flatMap(field(t, row)));
 };
 
-const refreshPeek = (row: Row) => { if (opened?.row === row) fillPeek(); };
+/** Matched by key, not by identity: a row the grid has just drawn again is the same record. */
+const refreshPeek = (row: Row) => {
+	if (!opened || !same(opened.key, key(opened.t, row))) return;
+
+	opened.row = row;
+	fillPeek();
+};
 
 function openPeek(t: TableMeta, row: Row, button: HTMLButtonElement): void {
 	opened?.button.closest('tr')?.classList.remove('open');
-	opened = { button, t, row };
+	opened = { button, t, row, key: key(t, row) };
 	button.closest('tr')?.classList.add('open');
 
 	fillPeek();
 
 	peek.hidden = false;
 	peekClose.focus();
+
+	route.mark(here(opened.key));		// the screen already shows it; the address only says so
 }
 
 
@@ -251,7 +267,7 @@ function edit(t: TableMeta, row: Row, c: ColumnMeta, td: HTMLTableCellElement): 
 const link = (t: TableMeta) => {
 	const a = el('a', t.table);
 
-	a.href = `#${encodeURIComponent(t.table)}`;
+	a.href = route.href({ screen: t.table, key: [], conditions: [] });
 	a.dataset.table = t.table;
 
 	return a;
@@ -262,41 +278,73 @@ const link = (t: TableMeta) => {
 
 let tables: TableMeta[] = [];
 
-/** The screen being viewed, so a filter change reloads it without re-routing. */
+/** The screen being viewed, so the address can be written from what is on it. */
 let screen: TableMeta | null = null;
 
 /** Built in `main`, once `_meta` has answered. */
 let filters!: FilterBar;
+let route!: Router;
 
-/** The hash names the screen, so the URL survives a copy into another tab. */
-const current = () => decodeURIComponent(location.hash.slice(1));
+/** The address for what is on screen now. Assembled from the screen and the bar themselves,
+    never from a second copy of what they hold. */
+const here = (record: string[] = []): View =>
+	({ screen: screen?.table ?? '', key: record, conditions: filters.conditions() });
 
 /** The rows the screen is asking for now. The filter is read off the bar rather than handed in,
     so arriving at a screen and changing its filter ask the same question. */
-async function load(t: TableMeta): Promise<void> {
+async function load(t: TableMeta): Promise<Row[]> {
 	blank();
 	say('Cargando…', 'busy');
 
 	const filter = filters.query();
 	const query = filter === undefined ? '' : `?filter=${encodeURIComponent(filter)}`;
+	const data = await api<Row[]>(`/api/${encodeURIComponent(t.table)}${query}`);
 
-	renderGrid(t, await api<Row[]>(`/api/${encodeURIComponent(t.table)}${query}`));
+	renderGrid(t, data);
 	say(summary(t));
+
+	return data;
 }
 
-async function show(name: string): Promise<void> {
-	const t = tables.find(x => x.table === name);
+/** Opens the record the address names, when the grid drew it. Rows and their `tr`s are in step,
+    so the row that matched names the button that marks it. */
+const reopen = (t: TableMeta, wanted: string[], data: Row[]): boolean => {
+	const i = data.findIndex(row => same(key(t, row), wanted));
+	const button = gridRows.children[i]?.querySelector('button');
 
-	if (!t) { location.hash = encodeURIComponent(tables[0].table); return; }
+	if (!(button instanceof HTMLButtonElement)) return false;
+
+	openPeek(t, data[i], button);
+
+	return true;
+};
+
+/** Draws what the address says. Every move — a link, the filter bar, Back — ends here, so what
+    is on screen and what the address says cannot come apart. */
+async function draw(): Promise<void> {
+	const { view, unresolved } = route.read();
+	const t = tables.find(x => x.table === view.screen);
+
+	// An address naming no screen this user has is not a place to be: rewritten, not added to.
+	if (!t) { route.go({ screen: tables[0].table, key: [], conditions: [] }, true); return; }
 
 	for (const a of nav.querySelectorAll('a'))
 		a.setAttribute('aria-current', String(a.dataset.table === t.table));
 
 	heading.textContent = t.table;
 	screen = t;
-	filters.reset(t);		// a filter names columns, so it belongs to the screen that has them
+	filters.reset(t, view.conditions);	// a filter names columns, so it belongs to the screen that has them
 
-	await load(t);
+	const data = await load(t);
+
+	// What the address asked for and did not get is said, not silently dropped.
+	const notes = [
+		...unresolved.map(name => `filtro ignorado: ${name}`),
+		...(view.key.length && !reopen(t, view.key, data)
+			? [`el registro ${view.key.join(' · ')} no está en la lista`] : []),
+	];
+
+	if (notes.length) say(`${summary(t)} · ${notes.join(' · ')}`, 'error');
 }
 
 const fail = (err: Error) => {
@@ -306,8 +354,11 @@ const fail = (err: Error) => {
 	say(err.message, 'error');
 };
 
-const route = () => void show(current()).catch(fail);
-const refilter = () => { if (screen) void load(screen).catch(fail); };
+const render = () => void draw().catch(fail);
+
+// A filter change is a move like any other: it names a new address, and drawing it reloads.
+// The record open on the old filter is not carried over — it may not be in the new answer.
+const refilter = () => { if (screen) route.go(here()); };
 
 
 async function main(): Promise<void> {
@@ -327,13 +378,14 @@ async function main(): Promise<void> {
 	if (!tables.length) { say('No hay entidades disponibles para este usuario.'); return; }
 
 	filters = filterBar(meta.operators, refilter);
+	route = router(meta);
 
 	nav.replaceChildren(...tables.map(link));
 	toolbar.append(filters.element);
 	peekClose.addEventListener('click', dismissPeek);
 	addEventListener('keydown', e => { if (e.key === 'Escape') dismissPeek(); });
-	addEventListener('hashchange', route);
-	route();
+	route.onNavigate(render);
+	render();
 }
 
 void main();

@@ -61,7 +61,7 @@ const operators = {
 const byName: ReadonlyMap<string, Operator> = new Map(Object.entries(operators));
 
 /** When no operator is specified. */
-const DEFAULT_OP = 'eq';
+export const DEFAULT_OP = 'eq';
 
 /** The metadata for each operator, for the frontend to use. */
 export const operatorMeta: OperatorMeta[] = [...byName].map(([name, o]) =>

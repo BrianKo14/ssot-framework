@@ -2,14 +2,7 @@
 
 import type { ColumnMeta, FilterCondition, OperatorMeta, TableMeta } from '../shared/api.js';
 import { classed, el } from './dom.js';
-
-
-/** One committed condition. */
-interface Applied {
-	column: ColumnMeta;
-	operator: OperatorMeta;
-	value: string | null;
-}
+import { type Condition, operand } from './route.js';
 
 /** The condition being written: a column, then a comparison, then a value. */
 interface Draft {
@@ -26,14 +19,15 @@ interface Choice {
 
 export interface FilterBar {
 	readonly element: HTMLElement;
-	/** Point the bar at a screen, dropping whatever was being asked of the previous one. */
-	reset(t: TableMeta): void;
-	/** What is being asked for now, as `?filter=` takes it; `undefined` when nothing is. */
+	reset(t: TableMeta, seed?: Condition[]): void;
+	/** @returns the conditions that have been applied to the filter bar. */
+	conditions(): Condition[];
+	/** @returns SQL WHERE clause. */
 	query(): string | undefined;
 }
 
 /** 
- * @param operators the comparisons the backend offers, straight from `_meta`
+ * @param operators the comparisons the backend offers, taken from `_meta`
  * @param apply called when the answer to `query()` has changed */
 export function filterBar(operators: OperatorMeta[], apply: () => void): FilterBar {
 	const entry = el('input');
@@ -42,7 +36,7 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 	const menu = classed('ul', 'menu');
 	const element = classed('div', 'filters', chips, menu);
 
-	element.hidden = true;					// until a screen points the bar at its columns
+	element.hidden = true;
 	menu.hidden = true;
 	menu.id = 'filter-menu';
 	menu.setAttribute('role', 'listbox');
@@ -54,18 +48,17 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 	entry.setAttribute('aria-label', 'Filtrar');
 
 	let table: TableMeta | null = null;
-	let applied: Applied[] = [];
+	let applied: Condition[] = [];
 	let being: Draft = {};
 
 	let showing: Choice[] = [];
 	let lines: HTMLElement[] = [];
 	let active = 0;						// the highlighted line
-	let restoring = false;					// a redraw putting the caret back, not the user arriving
+	let restoring = false;					// when the box is redrawn, keep focus on the entry
 
 
 	// --- What the dropdown offers ---
 
-	/** What there is to choose at this step: a column, then a comparison, then nothing. */
 	const choices = (): Choice[] => {
 		if (!table) return [];
 
@@ -92,7 +85,6 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 		return li;
 	};
 
-	/** Draws the dropdown, closing it once there is nothing left to choose. */
 	const openMenu = () => {
 		const offered = choices();
 
@@ -122,13 +114,12 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 		active = 0;
 	};
 
-	/** A comparison that takes no value leaves nothing to ask, so it is committed here. */
 	const choose = (choice: Choice) => {
 		choice.take();
-		entry.value = '';				// what found the choice is not the next answer
+		entry.value = '';				
 
 		if (being.operator && !being.operator.takesValue) commit();
-		else { redraw(); openMenu(); }			// the next step, or closed when a value comes next
+		else { redraw(); openMenu(); }			
 
 		entry.focus();
 	};
@@ -147,29 +138,27 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 		return button;
 	};
 
-	const remove = (a: Applied) => () => {
+	const remove = (a: Condition) => () => {
 		applied = applied.filter(x => x !== a);
 
 		redraw();
 		apply();
 	};
 
-	/** No operand where the comparison is the whole question: `notas is null`, not `… null null`. */
-	const operand = (a: Applied) => {
+	const shownOperand = (a: Condition) => {
 		if (!a.operator.takesValue) return [];
 
 		const value = el('span', a.value === null ? 'null' : a.value);
 
-		value.classList.toggle('null', a.value === null);	// the grid's own mark for an absent value
+		value.classList.toggle('null', a.value === null);
 
 		return [value];
 	};
 
-	const chip = (a: Applied) => classed('span', 'chip',
-		el('b', a.column.name), el('i', a.operator.symbol), ...operand(a),
+	const chip = (a: Condition) => classed('span', 'chip',
+		el('b', a.column.name), el('i', a.operator.symbol), ...shownOperand(a),
 		remover(`Quitar filtro ${a.column.name}`, remove(a)));
 
-	/** What the box is asking for; on the value step, the column's own `expected` string. */
 	const placeholder = (): string => {
 		if (being.column && being.operator) return being.column.expected;
 		if (being.column) return 'comparación…';
@@ -178,14 +167,10 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 		return `Filtrar por ${table?.columns.slice(0, 3).map(c => c.name).join(', ') ?? ''}…`;
 	};
 
-	/** As wide as what is in it, or as what it is asking for while empty. The floor is the spare
-	 *  width that shows a chip is missing parts; the ceiling keeps it from crowding its neighbours. */
 	const resize = () => {
 		entry.size = Math.min(Math.max((entry.value || entry.placeholder).length + 1, 6), 28);
 	};
 
-	/** Rewrites the chips. `replaceChildren` detaches the box, so the caret is put back — and only
-	 *  when it was there to begin with. */
 	const redraw = () => {
 		const focused = document.activeElement === entry;
 
@@ -207,15 +192,13 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 
 	// --- Writing one condition ---
 
-	/** The condition joins the chips, and the box is ready for the next. */
 	const commit = () => {
 		if (!being.column || !being.operator) return;
 
 		applied = [...applied, {
 			column: being.column,
 			operator: being.operator,
-			// an empty box is null; one that takes no value has none whatever the box holds
-			value: being.operator.takesValue && entry.value.trim() !== '' ? entry.value : null,
+			value: operand(being.operator, entry.value),
 		}];
 
 		being = {};
@@ -234,7 +217,6 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 		openMenu();
 	};
 
-	/** Steps back out: the comparison, then the column, then the last committed condition. */
 	const back = () => {
 		if (being.operator) being = { column: being.column };
 		else if (being.column) being = {};
@@ -245,7 +227,6 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 		openMenu();
 	};
 
-	/** Down and up walk the open dropdown, and open it when it is closed. */
 	const step = (by: number) => {
 		if (menu.hidden) { openMenu(); return; }
 		if (!lines.length) return;
@@ -256,7 +237,6 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 		lines[active].scrollIntoView({ block: 'nearest' });
 	};
 
-	/** A map rather than a chain of `if`s: another key is another entry, not another branch. */
 	const keys = new Map<string, (e: KeyboardEvent) => void>([
 		['ArrowDown', e => { e.preventDefault(); step(1); }],
 		['ArrowUp', e => { e.preventDefault(); step(-1); }],
@@ -268,7 +248,7 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 			else if (being.column) discard();
 		}],
 		['Backspace', e => {
-			if (entry.value !== '') return;			// only an empty box steps back out
+			if (entry.value !== '') return;	
 
 			e.preventDefault();
 			back();
@@ -279,7 +259,6 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 	entry.addEventListener('focus', () => { if (!restoring) openMenu(); });
 	entry.addEventListener('keydown', e => keys.get(e.key)?.(e));
 
-	// Clicking the bar's own background is clicking the box: the whole strip reads as one control.
 	element.addEventListener('mousedown', e => {
 		if (e.target === entry || !(e.target instanceof Element) || e.target.closest('button, li')) return;
 
@@ -288,9 +267,6 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 		openMenu();
 	});
 
-	// Capture, not bubble: choosing a line rebuilds the dropdown and detaches the line that was
-	// clicked, so asked afterwards "is the target inside the bar?" answers no and shuts what the
-	// choice just opened.
 	addEventListener('mousedown', e => {
 		if (e.target instanceof Node && !element.contains(e.target)) closeMenu();
 	}, true);
@@ -298,9 +274,25 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 
 	// --- What the screen asks of it ---
 
-	const reset = (t: TableMeta) => {
+	const encode = (list: Condition[]) => {
+		if (!list.length) return undefined;
+
+		const filter = new Map<string, FilterCondition[]>();
+
+		for (const a of list)
+			filter.set(a.column.name,
+				[...filter.get(a.column.name) ?? [], { op: a.operator.name, value: a.value }]);
+
+		return JSON.stringify(Object.fromEntries(filter));
+	};
+
+	const query = () => encode(applied);
+
+	const reset = (t: TableMeta, seed: Condition[] = []) => {
+		if (table === t && encode(seed) === query()) return;
+
 		table = t;
-		applied = [];
+		applied = [...seed];
 		being = {};
 		entry.value = '';
 
@@ -309,21 +301,7 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 		element.hidden = false;
 	};
 
-	/** Several conditions on one column go as a list, which is how `filter.ts` reads them. A Map,
-	 *  so a column named like an `Object` member is still a key. */
-	const query = () => {
-		if (!applied.length) return undefined;
-
-		const filter = new Map<string, FilterCondition[]>();
-
-		for (const a of applied)
-			filter.set(a.column.name,
-				[...filter.get(a.column.name) ?? [], { op: a.operator.name, value: a.value }]);
-
-		return JSON.stringify(Object.fromEntries(filter));
-	};
-
 	redraw();
 
-	return { element, reset, query };
+	return { element, reset, conditions: () => applied, query };
 }

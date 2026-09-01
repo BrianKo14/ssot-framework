@@ -38,5 +38,6 @@ export interface FormatMeta {
 export interface SystemMeta {
 	tables: TableMeta[];
 	operators: OperatorMeta[];
+	defaultOperator: string;
 	formats: FormatMeta[];
 }

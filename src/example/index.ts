@@ -2,8 +2,15 @@ import { type AccessDef, CAPABILITIES } from '../schema/access.js';
 import { defineEntities, defineEntity, type RecordDef, tablesFrom, typeCollectionOf } from '../schema/build.js';
 import { serve } from '../serve.js';
 import { commonTypes, text } from '../types/builtin.js';
+import { textual, type TypeHandler } from '../types/handler.js';
 
-const types = { ...commonTypes, nombre: text(100) };
+/** An application type the framework never heard of: a shape, and nothing else.
+ * Bounded at 254 characters, the longest address SMTP has to accept (RFC 5321 4.5.3.1.3). */
+const email: TypeHandler<string> = textual('an e-mail address',
+	/^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+	m => [...m[0]].length <= 254 ? m[0] : undefined);
+
+const types = { ...commonTypes, nombre: text(100), email };
 const typeDefs = typeCollectionOf(types);
 
 // --- The system definition ---
@@ -15,7 +22,7 @@ const entityDefs = defineEntities({
 		fields: {
 			id: { type: 'integer' },
 			nombre: { type: 'text', nullable: false, isName: true },
-			email: { type: 'text' },
+			email: { type: 'email' },
 		} satisfies RecordDef<typeof typeDefs>,
 		fks: {}, // TODO: if left out, `defineEntity` widens its fk parameter to the constraint
 	}),

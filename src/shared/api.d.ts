@@ -28,7 +28,15 @@ export interface FilterCondition {
 	value: unknown;
 }
 
+/** Note: Only the formats that hand back a file are listed. */
+export interface FormatMeta {
+	name: string;		// e.g. "xlsx", i.e. what `?format=` takes
+	label: string;		// human-readable name, e.g. "Excel"
+	extension: string;	// e.g. "xlsx"
+}
+
 export interface SystemMeta {
 	tables: TableMeta[];
 	operators: OperatorMeta[];
+	formats: FormatMeta[];
 }

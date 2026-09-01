@@ -5,7 +5,8 @@ import { HttpError } from '../errors.js';
 import type { ColumnInfo, ReferenceInfo, TableInfo } from '../schema/model.js';
 import { columnList, q } from '../sql/identifier.js';
 import { asRecord, checkedValues, namedColumns, rowValues } from '../schema/values.js';
-import { wrap } from './handler.js';
+import { formatNamed } from '../format/index.js';
+import { sendAs, wrap } from './handler.js';
 import { permit } from './permission.js';
 
 
@@ -24,11 +25,11 @@ const masterParams = (ref: ReferenceInfo) => keyParams('mpk', ref.to.pk);
 
 
 /** e.g. `detailPath(ref)` -> `'/api/cursos/2026-1/algebra'` */
-export const detailPath = (ref: ReferenceInfo) => `${segments(masterParams(ref))}/${ref.from.table}`;
+const detailPath = (ref: ReferenceInfo) => `${segments(masterParams(ref))}/${ref.from.table}`;
 
 /** True iff the detail can be nested under its master's URL.
  * Only if its fk matches the master's *primary* key. */
-export const isNestable = (ref: ReferenceInfo) =>
+const isNestable = (ref: ReferenceInfo) =>
 	ref.targetColumns.length === ref.to.pk.length && ref.targetColumns.every(c => ref.to.pk.includes(c));
 
 
@@ -80,9 +81,8 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 
 	/** --- ENDPOINTS --- **/
 
-	// GET /[?filter={"col":value,"col2":{"op":"ge","value":…},...}]
-	// SELECT cols FROM table [WHERE col = $1 AND col2 >= $2 ...] ORDER BY pk_col1, pk_col2, ...
-	r.get('/', wrap(async (req, res) => {
+	/** SELECT cols FROM table [WHERE col = $1 AND col2 >= $2 ...] ORDER BY pk_col1, pk_col2, ... */
+	const listRows = async (req: Request): Promise<Record<string, unknown>[]> => {
 		const raw = withInherited(req, parseFilter(req.query.filter)); 			// under a master, its key comes from the path
 
 		const params: unknown[] = [];
@@ -91,7 +91,19 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 		const rows = await db.query(
 			`select ${cols} from ${table}${filtered} order by ${pkCols}`, params);	// sort by primary key
 
-		res.json(rows.map(wire));
+		return rows.map(wire);
+	};
+
+	// GET /[?filter={"col":value,"col2":{"op":"ge","value":…},...}][&format=xlsx|txt]
+	r.get('/', wrap(async (req, res) => {
+		const format = formatNamed(req.query.format);					// before the query: a bad format costs no round trip
+
+		await sendAs(res, format, {
+			name: t.table,
+			columns: t.columns,
+			pk: t.pk.map(c => c.name),
+			rows: await listRows(req),
+		});
 	}));
 
 	// GET /:pk0[/:pk1...]
@@ -175,6 +187,22 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 	}));
 
 
+
+	return r;
+}
+
+
+/** Gather all the CRUD routers for the given tables. Mounted whole at `/api`. */
+export function entityRouter(db: Db, tables: TableInfo[]): Router {
+	const r = Router();
+
+	for (const t of tables) {					// per table CRUD router at /api/<table>
+		r.use(`/${t.table}`, crudRouter(db, t));
+
+		// ...and mount each of its details' collections under it, at /api/<master>/<master key>/<detail>.
+		for (const ref of t.details.filter(isNestable))
+			r.use(`/${t.table}${detailPath(ref)}`, crudRouter(db, ref.from, ref));
+	}
 
 	return r;
 }

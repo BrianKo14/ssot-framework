@@ -1,12 +1,12 @@
 import path from 'node:path';
-import express, { type ErrorRequestHandler } from 'express';
+import express from 'express';
 import { authTables } from '../auth/entities.js';
 import type { Authenticator } from '../auth/store.js';
 import type { AppConfig } from '../config.js';
 import type { Db } from '../db/postgres.js';
 import { AUTH, gate, login, sessionRouter } from './auth.js';
-import { crudRouter, detailPath, isNestable } from './crud.js';
-import { HttpError } from '../errors.js';
+import { entityRouter } from './crud.js';
+import { onError } from './handler.js';
 import { META, metaRouter } from './meta.js';
 import type { TableInfo } from '../schema/model.js';
 
@@ -21,15 +21,6 @@ const refuseReserved = (tables: TableInfo[]): void => {
 	const taken = tables.map(t => t.table).filter(name => RESERVED.has(name));
 
 	if (taken.length) throw new Error(`entity name(s) reserved by the framework: ${taken.join(', ')}`);
-};
-
-/** Error handling middleware */
-const onError: ErrorRequestHandler = (err, _req, res, _next) => {
-	const status = err instanceof HttpError ? err.status : 500;
-
-	if (status === 500) console.error(err);
-
-	res.status(status).json({ error: status === 500 ? 'internal error' : err.message });
 };
 
 
@@ -59,14 +50,8 @@ export function buildApp(db: Db, tables: TableInfo[], auth: Authenticator, confi
 	// --> 5. Schema metadata
 	app.use(`/api/${META}`, metaRouter(tables));
 
-	// --> 6. CRUD routers
-	for (const t of tables) {						// per table CRUD router at /api/<table>
-		app.use(`/api/${t.table}`, crudRouter(db, t));
-
-		// ...and mount each of its details' collections under it, at /api/<master>/<master key>/<detail>.
-		for (const ref of t.details.filter(isNestable))
-			app.use(`/api/${t.table}${detailPath(ref)}`, crudRouter(db, ref.from, ref));
-	}
+	// --> 6. One CRUD router per table + each detail under its master
+	app.use('/api', entityRouter(db, tables));
 
 	// --> 7. Frontend
 	app.use(express.static(PUBLIC_DIR));					// must go after /api; serves the login page anonymously

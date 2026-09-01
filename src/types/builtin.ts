@@ -38,9 +38,12 @@ export const integer = (min = INT4_MIN, max = INT4_MAX): TypeHandler<number> => 
 };
 
 /** Note: A JS number cannot hold what a Postgres `numeric` column can, so we bind it as a string. */
-export const decimal: TypeHandler<string> = scalar('a number',
-	raw => typeof raw === 'number' && Number.isFinite(raw) ? String(raw) : undefined,
-	raw => /^-?\d+(\.\d+)?$/.test(raw) ? raw : undefined);
+export const decimal: TypeHandler<string> = {
+	...scalar('a number',
+		raw => typeof raw === 'number' && Number.isFinite(raw) ? String(raw) : undefined,
+		raw => /^-?\d+(\.\d+)?$/.test(raw) ? raw : undefined),
+	cell: Number,
+};
 
 /** 
  * @param maxLength optionally bounded. 

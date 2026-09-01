@@ -2,6 +2,7 @@
 
 import { Router } from 'express';
 import type { ColumnMeta, SystemMeta, TableMeta } from '../shared/api.js';
+import { formatMeta } from '../format/index.js';
 import { operatorMeta } from '../sql/filter.js';
 import { allows, CAPABILITIES } from '../schema/access.js';
 import type { ColumnInfo, TableInfo } from '../schema/model.js';
@@ -27,6 +28,10 @@ export function metaRouter(tables: TableInfo[]): Router {
 			.filter(({ t }) => allows(t.access, role, 'read'))
 			.map(({ t, meta }) => ({ ...meta, capabilities: CAPABILITIES.filter(c => allows(t.access, role, c)) }));
 
-		res.json({ tables: visible, operators: operatorMeta } satisfies SystemMeta);
+		res.json({ 
+			tables: visible,
+			operators: operatorMeta,
+			formats: formatMeta
+		} satisfies SystemMeta);
 	});
 }

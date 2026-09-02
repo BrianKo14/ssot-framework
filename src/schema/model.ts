@@ -36,6 +36,7 @@ export interface ReferenceInfo {
  * Per the Def/Info convention: a Def is what the schema author writes,
  * an Info is the completed version that generators consume. */
 export interface TableInfo {
+	schema: string;				// physical schema (namespace) the table lives in
 	table: string;				// physical table name
 	pk: ColumnInfo[];			// primary key columns, in declaration order; may be composite
 	uks: Record<string, ColumnInfo[]>;	// unique keys, by the name the author gave each

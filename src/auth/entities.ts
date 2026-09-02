@@ -14,6 +14,9 @@ const authTypes = {
 
 const typeDefs = typeCollectionOf(authTypes);
 
+/** The framework's own tables live in their own namespace. */
+const AUTH_SCHEMA = 'auth';
+
 const entityDefs = defineEntities({
 
 	/** User's identity and profile.
@@ -27,6 +30,7 @@ const entityDefs = defineEntities({
 			active: { type: 'boolean', nullable: false },
 		} satisfies RecordDef<typeof typeDefs>,
 		fks: {},
+		schema: AUTH_SCHEMA,
 	}),
 
 	/** User's credentials. */
@@ -37,6 +41,7 @@ const entityDefs = defineEntities({
 			hash: { type: 'secret', nullable: false },
 		} satisfies RecordDef<typeof typeDefs>,
 		fks: { user: { entity: 'user', fields: { user: 'username' } } },
+		schema: AUTH_SCHEMA,
 	}),
 
 	/** A live login session. */
@@ -49,6 +54,7 @@ const entityDefs = defineEntities({
 			expires_at: { type: 'datetime', nullable: false },	// Idem.
 		} satisfies RecordDef<typeof typeDefs>,
 		fks: { user: { entity: 'user', fields: { user: 'username' } } },
+		schema: AUTH_SCHEMA,
 	}),
 });
 

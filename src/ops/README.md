@@ -6,8 +6,7 @@ Everything here talks to the database directly.
 
 ## Creating the database
 
-`npm run db:create` writes the SQL that creates the schema (domains, tables,
-primary/unique/foreign keys, indexes) to stdout.
+`npm run db:create` writes the SQL that creates the schema (domains, tables, primary/unique/foreign keys, indexes, etc.) to stdout.
 
 ```
 npm run db:create              # print it

@@ -5,7 +5,7 @@ import type { Db } from '../db/postgres.js';
 import type { ColumnInfo, TableInfo } from '../schema/model.js';
 import { checkedValues, rowValues } from '../schema/values.js';
 import { equalities, where } from '../sql/filter.js';
-import { columnList, q } from '../sql/identifier.js';
+import { columnList, q, tableRef } from '../sql/identifier.js';
 import { token as tokenType } from '../types/builtin.js';
 import { col, credentialTable, password as PASSWORD, sessionTable, userTable } from './entities.js';
 import { digestOf, dummyHash, hashPassword, mintToken, verifyPassword } from './hash.js';
@@ -66,7 +66,7 @@ export function dbAuthenticator(db: Db, sessionTtl: string): Authenticator & {
 	async function rowsWhere(t: TableInfo, conds: string[], params: unknown[]): Promise<Record<string, unknown>[]> {
 		if (!conds.length) throw new Error(`refusing an unconditional read of "${t.table}"`);
 
-		const rows = await db.query(`select ${columnList(t.columns)} from ${q(t.table)}${where(conds)}`, params);
+		const rows = await db.query(`select ${columnList(t.columns)} from ${tableRef(t)}${where(conds)}`, params);
 
 		return rows.map(r => rowValues(t.columns, r));
 	}
@@ -102,7 +102,7 @@ export function dbAuthenticator(db: Db, sessionTtl: string): Authenticator & {
 			: 'do nothing';
 
 		await db.query(
-			`insert into ${q(t.table)} (${columnList(cols)}) values (${ph})`
+			`insert into ${tableRef(t)} (${columnList(cols)}) values (${ph})`
 			+ ` on conflict (${columnList(key)}) ${onConflict}`, params);
 	}
 
@@ -110,7 +110,7 @@ export function dbAuthenticator(db: Db, sessionTtl: string): Authenticator & {
 		const params: unknown[] = [];
 		const conds = equalities({ [S_USER.name]: username }, params);
 
-		await db.query(`delete from ${q(sessionTable.table)}${where(conds)}`, params);
+		await db.query(`delete from ${tableRef(sessionTable)}${where(conds)}`, params);
 	}
 
 	return {
@@ -138,7 +138,7 @@ export function dbAuthenticator(db: Db, sessionTtl: string): Authenticator & {
 
 		async login(username, password) {
 			// Clean up expired sesssions every time someone logs in
-			await db.query(`delete from ${q(sessionTable.table)} where ${q(S_EXPIRES_AT.name)} <= now()`);
+			await db.query(`delete from ${tableRef(sessionTable)} where ${q(S_EXPIRES_AT.name)} <= now()`);
 
 			const user = await activeUser(username);
 			const stored = user ? await storedHash(user[U_USERNAME.name]) : null;
@@ -154,7 +154,7 @@ export function dbAuthenticator(db: Db, sessionTtl: string): Authenticator & {
 
 			// Set the session's expiration to `now() + sessionTtl`
 			const rows = await db.query(
-				`insert into ${q(sessionTable.table)} (${columnList(cols)})`
+				`insert into ${tableRef(sessionTable)} (${columnList(cols)})`
 				+ ` values ($1, $2, now(), now() + $3::interval)`
 				+ ` returning ${columnList(sessionTable.columns)}`,
 				[digestOf(token), user[U_USERNAME.name], sessionTtl]);
@@ -172,7 +172,7 @@ export function dbAuthenticator(db: Db, sessionTtl: string): Authenticator & {
 			const params: unknown[] = [];
 			const conds = equalities({ [S_TOKEN.name]: digestOf(token.value) }, params);
 
-			await db.query(`delete from ${q(sessionTable.table)}${where(conds)}`, params);
+			await db.query(`delete from ${tableRef(sessionTable)}${where(conds)}`, params);
 		},
 
 		/** Create / updates a user. */

@@ -3,7 +3,7 @@ import type { Db } from '../db/postgres.js';
 import { equalities, filterConditions, parseFilter, where } from '../sql/filter.js';
 import { HttpError } from '../errors.js';
 import type { ColumnInfo, ReferenceInfo, TableInfo } from '../schema/model.js';
-import { columnList, q } from '../sql/identifier.js';
+import { columnList, q, tableRef } from '../sql/identifier.js';
 import { asRecord, checkedValues, namedColumns, rowValues } from '../schema/values.js';
 import { formatNamed } from '../format/registry.js';
 import { sendAs, wrap } from './handler.js';
@@ -42,7 +42,7 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 	r.use(permit(t));				// first thing: authorization gate
 
 	const cols = columnList(t.columns);
-	const table = q(t.table);
+	const table = tableRef(t);
 	const pkCols = columnList(t.pk);
 
 	const pkParams = keyParams('pk', t.pk);

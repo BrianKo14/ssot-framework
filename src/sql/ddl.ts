@@ -1,19 +1,34 @@
 // The schema generator
 
 import type { ColumnInfo, TableInfo } from '../schema/model.js';
-import { checkedName, columnList, generatedName, q, storageType } from './identifier.js';
+import {
+	checkedName, checkedSchema, columnList, DEFAULT_SCHEMA, generatedName, q, qualified, storageType, tableRef,
+} from './identifier.js';
 
 
-// --- Domains ---
+// --- Schemas ---
+
+/** `create schema` for every schema except the default one, which Postgres already provides. */
+const schemaStatements = (schemas: string[]): string[] =>
+	schemas.filter(schema => schema !== DEFAULT_SCHEMA).map(schema => `create schema ${q(schema)}`);
+
+
+// --- Domains (custom types) ---
+
+/** A domain's qualified name. */
+const domainRef = (typeName: string): string => qualified(DEFAULT_SCHEMA, typeName);
 
 /** Type names Postgres already holds in `pg_catalog`.
- * 
  * We guarantee that no domain is created with the same name as one of these.
- * `integer` and `bigint` are not in this list because they are aliases of `int4` and `int8`. */
+ * 
+ * This is a readability guard. We forbid this becausee.g. a if a domain `text` existed,
+ * a person writing a query by hand and typing `text` would get the built-in type, no the domain.
+ * Even though every type reference is fully qualified `"public"."text"`. */
 const SHADOWED = new Set([
-	'bool', 'bpchar', 'bytea', 'char', 'date', 'float4', 'float8', 'int2', 'int4', 'int8',
-	'interval', 'json', 'jsonb', 'money', 'numeric', 'text', 'time', 'timestamp', 'timestamptz',
-	'timetz', 'uuid', 'varchar', 'xml',
+	'bigint', 'bool', 'boolean', 'bpchar', 'bytea', 'char', 'date', 'decimal',
+	'double precision', 'float4', 'float8', 'int', 'int2', 'int4', 'int8', 'integer',
+	'interval', 'json', 'jsonb', 'money', 'numeric', 'real', 'smallint', 'text', 'time',
+	'timestamp', 'timestamptz', 'timetz', 'uuid', 'varchar', 'xml',
 ]);
 
 /** Collects all the distinct types used in the schema and their storage types. */
@@ -46,14 +61,14 @@ const domainStatements = (byName: Map<string, string>): string[] =>
 				throw new Error(`type "${typeName}" cannot be stored as ${sqlType}: `
 					+ `Postgres already has a type of that name and would use it instead`);
 
-			return `create domain ${q(typeName)} as ${sqlType}`;
+			return `create domain ${domainRef(typeName)} as ${sqlType}`;
 		});
 
 
 // --- Tables ---
 
 const columnType = (c: ColumnInfo): string =>
-	needsDomain(c.typeName, c.type.sqlType) ? q(c.typeName) : storageType(c.type.sqlType);
+	needsDomain(c.typeName, c.type.sqlType) ? domainRef(c.typeName) : storageType(c.type.sqlType);
 
 /** e.g. `"nombre" varchar(100) not null` */
 const columnDefinition = (c: ColumnInfo): string =>
@@ -68,7 +83,7 @@ function tableStatement(t: TableInfo, taken: Set<string>): string {
 			`constraint ${q(generatedName([t.table, uk, 'uk'], taken))} unique (${columnList(cols)})`),
 	];
 
-	return `create table ${q(t.table)} (\n  ${parts.join(',\n  ')}\n)`;
+	return `create table ${tableRef(t)} (\n  ${parts.join(',\n  ')}\n)`;
 }
 
 
@@ -77,9 +92,10 @@ function tableStatement(t: TableInfo, taken: Set<string>): string {
 /** Creates the SQL statement for adding a foreign key constraint to a table. */
 const foreignKeyStatement = (t: TableInfo, taken: Set<string>): string[] =>
 	t.references.map(ref =>
-		`alter table ${q(t.table)} add constraint ${q(generatedName([t.table, ref.name, 'fk'], taken))}`
+		`alter table ${tableRef(t)} add constraint ${q(generatedName([t.table, ref.name, 'fk'], taken))}`
 		+ ` foreign key (${columnList(ref.columns)})`
-		+ ` references ${q(ref.to.table)} (${columnList(ref.targetColumns)})`);
+		// the target's own schema, so a fk across schemas needs no special case
+		+ ` references ${tableRef(ref.to)} (${columnList(ref.targetColumns)})`);
 
 /** Determines if a list of columns (in order) is the start of a key, in order. */
 const leads = (cols: ColumnInfo[], key: ColumnInfo[]): boolean =>
@@ -91,33 +107,41 @@ const indexStatement = (t: TableInfo, taken: Set<string>): string[] =>
 		// Skip indexes that are already covered by a primary key or unique constraint
 		.filter(ref => ![t.pk, ...Object.values(t.uks)].some(key => leads(ref.columns, key)))
 		.map(ref => `create index ${q(generatedName([t.table, ref.name, 'ix'], taken))}`
-			+ ` on ${q(t.table)} (${columnList(ref.columns)})`);
+			+ ` on ${tableRef(t)} (${columnList(ref.columns)})`);
 
 
 // --- The schema ---
 
-/** A set of all table names in the schema. */
-function tableNames(tables: TableInfo[]): Set<string> {
-	const taken = new Set<string>();
+function takenBySchema(tables: TableInfo[]): Map<string, Set<string>> {
+	const bySchema = new Map<string, Set<string>>();
 
 	for (const t of tables) {
-		if (taken.has(t.table)) throw new Error(`two entities are both stored in table "${t.table}"`);
+		let taken = bySchema.get(t.schema);
+
+		if (!taken) bySchema.set(checkedSchema(t.schema), taken = new Set<string>());
+
+		if (taken.has(t.table))
+			throw new Error(`two entities are both stored in table "${t.schema}"."${t.table}"`);
 
 		taken.add(checkedName(t.table, 'table'));
 	}
 
-	return taken;
+	return bySchema;
 }
 
 /** The SQL script that creates the schema for all the tables. */
 export function schemaSql(tables: TableInfo[]): string {
-	const taken = tableNames(tables);
+	const taken = takenBySchema(tables);
+
+	/** The names already used in the schema this table lives in. */
+	const namesIn = (t: TableInfo): Set<string> => taken.get(t.schema)!;
 
 	const statements = [
+		...schemaStatements([...taken.keys()]),
 		...domainStatements(storages(tables)),
-		...tables.map(t => tableStatement(t, taken)),
-		...tables.flatMap(t => foreignKeyStatement(t, taken)),
-		...tables.flatMap(t => indexStatement(t, taken)),
+		...tables.map(t => tableStatement(t, namesIn(t))),
+		...tables.flatMap(t => foreignKeyStatement(t, namesIn(t))),
+		...tables.flatMap(t => indexStatement(t, namesIn(t))),
 	];
 
 	return `-- Generated from the system definition. Edit the definition, not this.\n\n`

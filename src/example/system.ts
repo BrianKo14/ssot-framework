@@ -47,6 +47,7 @@ const entityDefs = defineEntities({
 			confirmada: { type: 'boolean' },
 		} satisfies RecordDef<typeof typeDefs>,
 		fks: { cliente: { entity: 'cliente', fields: { cliente: 'id' } } },
+		schema: 'ventas',
 	}),
 
 	item: defineEntity({
@@ -59,6 +60,7 @@ const entityDefs = defineEntities({
 			cantidad: { type: 'integer' },
 		} satisfies RecordDef<typeof typeDefs>,
 		fks: { reserva: { entity: 'reserva', fields: ['fecha', 'id'] } },
+		schema: 'operacion',
 	}),
 });
 

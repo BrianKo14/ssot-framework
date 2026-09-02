@@ -4,6 +4,7 @@
 import { boxType, completeEntity, type EntityDef, type EntityInfo, type TypeCollection } from 'system-definition';
 import type { Capability } from '../shared/api.js';
 import type { TypeCollectionOf, TypeHandlers } from '../types/handler.js';
+import { DEFAULT_SCHEMA } from '../sql/identifier.js';
 import { accessOf, type AccessDef } from './access.js';
 import type { ColumnInfo, Columns, ReferenceInfo, TableInfo } from './model.js';
 
@@ -46,8 +47,8 @@ function tableInfo(
 	const byName: Columns = new Map(columns.map(c => [c.name, c]));
 
 	return {
-		// The entity name doubles as the table name; TODO: SCOPE (4) is where a distinct physical name would come from.
-		table: entityName,
+		schema: info.schema ?? DEFAULT_SCHEMA,
+		table: entityName, 			// note: internally, we extrapolate a physical table name from the entity name, we don't let the schema author name it
 		pk: info.pk.map(namedColumn(byName, `entity "${entityName}": primary key`)),
 		uks: Object.fromEntries(Object.entries(info.uks).map(([uk, fields]) =>
 			[uk, fields.map(namedColumn(byName, `entity "${entityName}": unique key "${uk}"`))])),

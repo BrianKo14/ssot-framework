@@ -1,10 +1,16 @@
 // Utilities for handling SQL identifiers and types.
 
 import { createHash } from 'node:crypto';
-import type { ColumnInfo } from '../schema/model.js';
+import type { ColumnInfo, TableInfo } from '../schema/model.js';
 
 /** Quote an identifier for use in a query; treat them as names, not commands. */
 export const q = (ident: string) => `"${ident.replace(/"/g, '""')}"`;
+
+export const DEFAULT_SCHEMA = 'public';
+
+/** A qualified name for a database object: schema + name, both quoted. */
+export const qualified = (schema: string, name: string) => `${q(schema)}.${q(name)}`;
+export const tableRef = (t: TableInfo) => qualified(t.schema, t.table);
 
 /** List of column names -> comma-separated string for SQL. */
 export const columnList = (cols: ColumnInfo[]) => cols.map(c => q(c.name)).join(', ');
@@ -71,4 +77,15 @@ export function checkedName(name: string, what: string): string {
 		throw new Error(`${what} "${name}" is longer than the ${MAX_NAME_BYTES} bytes Postgres keeps`);
 
 	return name;
+}
+
+/** Postgres reserves this prefix for its own schemas and refuses a `create schema` using it. */
+const RESERVED_SCHEMA_PREFIX = 'pg_';
+
+/** Checks a schema name the same way, plus the prefix Postgres keeps for itself. */
+export function checkedSchema(name: string): string {
+	if (name.startsWith(RESERVED_SCHEMA_PREFIX))
+		throw new Error(`schema "${name}" starts with "${RESERVED_SCHEMA_PREFIX}", which Postgres reserves`);
+
+	return checkedName(name, 'schema');
 }

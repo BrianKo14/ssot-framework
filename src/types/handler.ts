@@ -11,7 +11,8 @@ export type CellValue = string | number | boolean | null;
 /** Value -> cell value. */
 type Written<T> = { readonly cell: (value: T) => CellValue; };
 
-/** Is this one of my values? If so, return the value to bind. */
+/** Is this one of my values? If so, return the value to bind.
+ * Says nothing yet about how the value is stored, this is what the combinators below build. */
 export type Recogniser<T> = {
 	/** Human-readable description of the type, e.g. "an integer", "a date (YYYY-MM-DD)". */
 	readonly expected: string;
@@ -19,11 +20,15 @@ export type Recogniser<T> = {
 	check(raw: unknown): Checked<T>;
 } & Partial<Written<T>>;
 
-/** Interface for any type handler.
+/** Interface for any type handler
+ * A recogniser + how it is stored in the database + how it is written into a cell.
  *
- * The conditional makes `cell` mandatory when `T` is not a `CellValue`. This removes repetition down the line,
+ * Note: The conditional makes `cell` mandatory when `T` is not a `CellValue`. This removes repetition down the line,
  * otherwise `format.ts` would have to re-check at runtime. */
-export type TypeHandler<T> = Recogniser<T> & (T extends CellValue ? unknown : Written<T>);
+export type TypeHandler<T> = Recogniser<T> & {
+	/** The SQL type of the handler. Must be a valid SQL type. */
+	readonly sqlType: string;
+} & (T extends CellValue ? unknown : Written<T>);
 
 /** Collection of handlers exported to the framework. */
 export type TypeHandlers = Record<string, TypeHandler<any>>;
@@ -54,8 +59,7 @@ export const typeOf = <T>(expected: string, recognise: (raw: unknown) => T | und
 });
 
 // Note: we build these as `Recogniser<T>`, not `TypeHandler<T>`.
-// `cell` is filled in later when instantiated. The conditional in `TypeHandler` can't be resolved
-// inside a generic function, only once a concrete `T` is known at the assignment site.
+// Necessarily, `sqlType` and `cell` are filled in later when instantiated.
 
 /** TypeHandler<string> instances for string-shaped wire values (dates, emails, etc.)
  * 

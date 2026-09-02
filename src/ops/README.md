@@ -1,8 +1,32 @@
 # Ops CLI
 
-User-management CLI tool for the framework.
+Command-line tools for the framework: creating the database, and managing users.
 
 Everything here talks to the database directly.
+
+## Creating the database
+
+`npm run db:create` writes the SQL that creates the schema (domains, tables,
+primary/unique/foreign keys, indexes) to stdout.
+
+```
+npm run db:create              # print it
+npm run db:create -- --apply   # run it against DATABASE_URL
+```
+
+`--apply` is optional. If you don't pass it, the SQL is printed to stdout. If you do, it is applied to the database specified in `DATABASE_URL` (or the default in `.env`).
+
+`npm run db:reset` is the whole cycle for development: it destroys the Postgres
+volume, starts a fresh one and applies the schema to it. **It deletes
+everything**, users included, so the next step is always creating an admin
+again:
+
+```bash
+npm run db:reset
+AUTH_PASSWORD='yourpassword' npm run auth:user -- brian --role admin
+```
+
+The database that comes out is empty.
 
 ## Managing users
 

@@ -7,7 +7,7 @@
 import { createInterface } from 'node:readline';
 import { dbAuthenticator, type UserProfile } from '../auth/store.js';
 import { loadConfig } from '../config.js';
-import { connect, type Db } from '../db/postgres.js';
+import { run, waitForDb } from './cli.js';
 
 const USAGE = 'usage: npm run auth:user -- <username> [--role <r>] [--inactive] [--email <e>] [--no-password]';
 
@@ -63,18 +63,6 @@ async function readPassword(): Promise<string> {
 	throw new Error('no password given');
 }
 
-async function waitForDb(url: string, attempts = 20): Promise<Db> {
-	for (let left = attempts; ; left--) {
-		try {
-			return await connect(url);
-		} catch (err) {
-			if (left <= 1) throw err;
-
-			await new Promise(resolve => setTimeout(resolve, 500));
-		}
-	}
-}
-
 async function main(): Promise<void> {
 	const { username, profile, setPassword } = parse(process.argv.slice(2));
 	const config = loadConfig();
@@ -89,7 +77,4 @@ async function main(): Promise<void> {
 	}
 }
 
-main().catch((err: unknown) => {
-	console.error(err instanceof Error ? err.message : String(err));
-	process.exitCode = 1;
-});
+run(main);

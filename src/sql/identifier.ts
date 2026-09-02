@@ -1,5 +1,6 @@
-// Writing the parts of a query that cannot be parameterized.
+// Utilities for handling SQL identifiers and types.
 
+import { createHash } from 'node:crypto';
 import type { ColumnInfo } from '../schema/model.js';
 
 /** Quote an identifier for use in a query; treat them as names, not commands. */
@@ -7,3 +8,67 @@ export const q = (ident: string) => `"${ident.replace(/"/g, '""')}"`;
 
 /** List of column names -> comma-separated string for SQL. */
 export const columnList = (cols: ColumnInfo[]) => cols.map(c => q(c.name)).join(', ');
+
+/** Throws an error if the SQL type is not valid. */
+export function storageType(sqlType: string): string {
+	if (!/^[a-z][a-z0-9 ]*(\(\d{1,4}(,\d{1,4})?\))?$/i.test(sqlType))
+		throw new Error(`"${sqlType}" does not read as a SQL type`);
+
+	return sqlType;
+}
+
+
+// --> Cutting names the framework generates (constaints, indexes)
+
+// A long entity name plus a long fk name can exceed what Postgres can store.
+// We cut the name and append a hash of the whole (avoids collision).
+
+/** Postgres truncates an identifier to `NAMEDATALEN - 1` = 63 *bytes*. */
+const MAX_NAME_BYTES = 63;
+
+/** How many characters to use for the hash. */
+const HASH_CHARS = 8;
+
+/** Cuts a string to fit within a byte limit. */
+function cut(s: string, maxBytes: number): string {
+	let kept = '';
+
+	for (const ch of s) {
+		if (Buffer.byteLength(kept + ch) > maxBytes) break;
+		kept += ch;
+	}
+
+	return kept;
+}
+
+/** Generates a unique name for a generated object.
+ * Truncating and hashing to stay within the Postgres identifier length limit.
+ * 
+ * @param parts the name in pieces, e.g. `['reserva', 'cliente', 'fk']`
+ * @param taken names already used in this schema; the result is added to it */
+export function generatedName(parts: string[], taken: Set<string>): string {
+	const full = parts.join('_');
+
+	const name = Buffer.byteLength(full) <= MAX_NAME_BYTES
+		? full
+		: cut(full, MAX_NAME_BYTES - HASH_CHARS - 1) + '_'
+			+ createHash('sha256').update(full).digest('hex').slice(0, HASH_CHARS);
+
+	if (taken.has(name)) throw new Error(`two generated objects would both be named "${name}"`);
+
+	taken.add(name);
+
+	return name;
+}
+
+
+// --> Checking names and types that come from the schema author[]
+
+/** Checks that a name is within the Postgres identifier length limit.
+ * @param what what the name is for, e.g. "table" or "column" */
+export function checkedName(name: string, what: string): string {
+	if (Buffer.byteLength(name) > MAX_NAME_BYTES)
+		throw new Error(`${what} "${name}" is longer than the ${MAX_NAME_BYTES} bytes Postgres keeps`);
+
+	return name;
+}

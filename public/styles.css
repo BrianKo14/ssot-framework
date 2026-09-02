@@ -550,9 +550,19 @@ td.bad input { outline-color: var(--bad); }		/* refused, and still on screen to 
 }
 #peek-close:hover { background: var(--hover); color: var(--ink); }
 
+/* The form fills the panel below its header, so the field list scrolls on its own and the
+   actions stay pinned to the bottom — the same reason the header stays pinned to the top. */
+#peek-form {
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
 /* The row read downwards: one field per line, so nothing is cut off the way the grid cuts it. */
 #peek-fields {
 	margin: 0;
+	flex: 1 1 auto;
 	overflow-y: auto;
 	scrollbar-width: thin;
 }
@@ -572,6 +582,68 @@ td.bad input { outline-color: var(--bad); }		/* refused, and still on screen to 
 	overflow-wrap: anywhere;
 }
 #peek-fields dd:last-child { border-bottom: 0; }
+
+#peek-fields dd input {
+	width: 100%;
+	padding: .375rem .5rem;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg);
+	color: var(--ink);
+	font: inherit;
+	font-size: .8125rem;
+	font-variant-numeric: tabular-nums;
+}
+#peek-fields dd input.dirty { border-color: var(--brand); }		/* changed here, not yet saved */
+#peek-fields dd input.bad { border-color: var(--bad); outline: 2px solid var(--bad); outline-offset: -1px; }
+#peek-fields dd input:disabled { color: var(--muted); background: var(--raised); }
+
+/* Why one field was refused, under that field. The server's own wording — the type handler is
+   the only thing that knows what the column expected, so nothing is composed on this side. */
+#peek-fields dd .bad-note {
+	margin: .375rem 0 0;
+	color: var(--bad);
+	font-size: .75rem;
+	overflow-wrap: anywhere;
+}
+
+/* Pinned under the field list; hidden outright for a table this user can only read. */
+#peek-actions {
+	display: flex;
+	flex: none;
+	justify-content: flex-end;
+	gap: .5rem;
+	padding: .75rem 1rem;
+	border-top: 1px solid var(--line);
+}
+#peek-actions[hidden] { display: none; }	/* `display: flex` would otherwise outvote the attribute */
+
+#peek-cancel {
+	padding: .4375rem .75rem;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--surface);
+	color: var(--muted);
+	font: inherit;
+	font-size: .8125rem;
+	cursor: pointer;
+}
+#peek-cancel:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+
+#peek-save {
+	padding: .4375rem .875rem;
+	border: 0;
+	border-radius: var(--radius);
+	background: var(--brand);
+	color: #06281b;				/* --brand is the same in both themes, so this can be fixed */
+	font: inherit;
+	font-size: .8125rem;
+	font-weight: 600;
+	cursor: pointer;
+}
+#peek-save:hover:not(:disabled) { filter: brightness(1.05); }
+
+:is(#peek-cancel, #peek-save):disabled { opacity: .5; cursor: default; }
 
 
 /* --- Account: the rail's footer --- */

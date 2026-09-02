@@ -5,6 +5,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { HttpError } from '../errors.js';
 import type { Format, Sheet } from '../format/registry.js';
+import type { ErrorBody } from '../shared/api.js';
 
 /** Route handler wrapper to reroute errors to the error handling middleware. */
 export const wrap = (h: RequestHandler): RequestHandler =>
@@ -16,7 +17,12 @@ export const onError: ErrorRequestHandler = (err, _req, res, _next) => {
 
 	if (status === 500) console.error(err);
 
-	res.status(status).json({ error: status === 500 ? 'internal error' : err.message });
+	const fields = err instanceof HttpError ? err.fields : undefined;
+	const body: ErrorBody = status === 500
+		? { error: 'internal error' }
+		: { error: err.message, ...(fields ? { fields } : {}) };
+
+	res.status(status).json(body);
 };
 
 

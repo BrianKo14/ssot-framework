@@ -1,7 +1,7 @@
 import type { ColumnMeta, SystemMeta, TableMeta } from '../shared/api.js';
-import { api, sending } from './api.js';
+import { api, ApiError, sending } from './api.js';
 import { authenticated, sessionEnded } from './auth.js';
-import { byId, el } from './dom.js';
+import { byId, classed, el } from './dom.js';
 import { filterBar, type FilterBar } from './filters.js';
 import { router, same, type Router, type View } from './route.js';
 
@@ -21,7 +21,11 @@ const 	nav = byId('entities'),
 	peek = byId('peek'),
 	peekEntity = byId('peek-entity'),
 	peekTitle = byId('peek-title'),
+	peekForm = byId('peek-form'),
 	peekFields = byId('peek-fields'),
+	peekActions = byId('peek-actions'),
+	peekCancel = byId('peek-cancel') as HTMLButtonElement,
+	peekSave = byId('peek-save') as HTMLButtonElement,
 	peekClose = byId('peek-close');
 
 const say = (message: string, state: 'ready' | 'busy' | 'error' = 'ready') => {
@@ -65,11 +69,14 @@ const shown = <K extends 'td' | 'dd'>(tag: K, value: unknown) => {
 
 const header = (t: TableMeta) => (c: ColumnMeta) => named(el('th', c.name, el('small', c.type)), t, c);
 
+/** Whether this column may be written to, by this caller. Shared by the grid's cell and the
+    peek's field, so the two surfaces can never disagree about what's editable. */
+const writable = (t: TableMeta, c: ColumnMeta) => !t.pk.includes(c.name) && t.capabilities.includes('update');
+
 const cell = (t: TableMeta, row: Row) => (c: ColumnMeta) => {
 	const td = shown('td', row[c.name]);
 
-	// If this cell is a pk, or user doesn't have update rights, it is not editable.
-	if (t.pk.includes(c.name) || !t.capabilities.includes('update')) return td;
+	if (!writable(t, c)) return td;
 
 	td.classList.add('editable');
 	td.addEventListener('dblclick', () => edit(t, row, c, td));
@@ -77,8 +84,44 @@ const cell = (t: TableMeta, row: Row) => (c: ColumnMeta) => {
 	return td;
 };
 
+/** Builds a error note for a field, showing a message below it. */
+const note = (input: HTMLInputElement, message?: string) => {
+	input.classList.toggle('bad', message !== undefined);
+	input.parentElement?.querySelector('.bad-note')?.remove();
+	input.removeAttribute('aria-describedby');
+
+	if (message === undefined) return;
+
+	const said = classed('p', 'bad-note', message);
+
+	said.id = `bad-${input.name}`;			// named, so the input it is about can point at it
+	said.setAttribute('role', 'alert');
+	input.setAttribute('aria-describedby', said.id);
+	input.after(said);
+};
+
+/** A field's editor in the side panel. */
+const peekInput = (c: ColumnMeta, row: Row): HTMLInputElement => {
+	const input = el('input');
+	const before = row[c.name] === null ? '' : String(row[c.name]);
+
+	input.type = 'text';
+	input.name = c.name;
+	input.value = before;
+	input.dataset.original = before;
+	input.placeholder = c.expected;
+	input.title = `${c.name}: ${c.type} — ${c.expected}`;
+	input.addEventListener('input', () => {
+		note(input);				// the refusal was about the value that has just changed
+		input.classList.toggle('dirty', input.value !== input.dataset.original);
+		syncPeekActions();
+	});
+
+	return input;
+};
+
 const field = (t: TableMeta, row: Row) => (c: ColumnMeta) =>
-	[named(el('dt', c.name), t, c), shown('dd', row[c.name])];
+	[named(el('dt', c.name), t, c), writable(t, c) ? el('dd', peekInput(c, row)) : shown('dd', row[c.name])];
 
 /** The grid's sticky leading column. */
 const lead = (tag: 'th' | 'td', ...children: Node[]) => {
@@ -149,7 +192,8 @@ const closePeek = (restore = false) => {
 
 const dismissPeek = () => closePeek(true);
 
-/** Writes the panel from what the row holds now. */
+/** Writes the panel from what the row holds now. Rebuilding the fields is what clears any
+    unsaved edit: a fresh input's value and its `data-original` are the same string. */
 const fillPeek = () => {
 	if (!opened) return;
 
@@ -158,14 +202,18 @@ const fillPeek = () => {
 	peekEntity.textContent = t.table;
 	peekTitle.textContent = key(t, row).join(' · ') || 'Registro';
 	peekFields.replaceChildren(...t.columns.flatMap(field(t, row)));
+	peekActions.hidden = !t.capabilities.includes('update');
+	syncPeekActions();
 };
 
-/** Matched by key, not by identity: a row the grid has just drawn again is the same record. */
+/** Matched by key, not by identity: a row the grid has just drawn again is the same record. An
+    edit in progress here is not one of those redraws — it must survive them — so it is left
+    alone rather than overwritten from under the person typing it. */
 const refreshPeek = (row: Row) => {
 	if (!opened || !same(opened.key, key(opened.t, row))) return;
 
 	opened.row = row;
-	fillPeek();
+	if (!peekFields.querySelector('input.dirty')) fillPeek();
 };
 
 function openPeek(t: TableMeta, row: Row, button: HTMLButtonElement): void {
@@ -180,6 +228,62 @@ function openPeek(t: TableMeta, row: Row, button: HTMLButtonElement): void {
 
 	route.mark(here(opened.key));		// the screen already shows it; the address only says so
 }
+
+/** Save and Cancel are enabled only while the panel disagrees with the row it is showing. */
+const syncPeekActions = () => {
+	const dirty = peekFields.querySelector('input.dirty') !== null;
+
+	peekSave.disabled = !dirty;
+	peekCancel.disabled = !dirty;
+};
+
+/** Every changed field goes in one request, not one PATCH per field: the row either takes the
+    whole edit or refuses it, never half of it. */
+async function savePeek(): Promise<void> {
+	if (!opened) return;
+
+	const { t, row } = opened;
+	const dirty = [...peekFields.querySelectorAll<HTMLInputElement>('input.dirty')];
+
+	if (!dirty.length) return;
+
+	const patch: Row = {};
+
+	for (const input of dirty) patch[input.name] = input.value.trim() === '' ? null : input.value;
+
+	peekSave.disabled = true;
+	peekCancel.disabled = true;
+	dirty.forEach(input => { input.disabled = true; });
+	say('Guardando…', 'busy');
+
+	try {
+		const saved = await api<Row>(rowPath(t, row), sending('PATCH', patch));
+
+		// What lands on screen is the row as the database now holds it, not the typed text.
+		// Assigned into the same object the row and the grid hold.
+		Object.assign(row, saved);
+
+		const tr = opened.button.closest('tr');
+		if (tr?.isConnected) fill(tr, t, row);
+
+		fillPeek();		// rebuilt from the saved row: fresh fields, nothing left dirty
+		say(summary(t));
+	} catch (err) {
+		if (sessionEnded(err)) { location.reload(); return; }
+
+		// A refusal that names columns is shown under each field it named, and only those: the
+		// rest of the edit was fine. One that names none — a vanished row, a constraint — is not
+		// about any single value here, so it stays on the status line alone.
+		const failed = err instanceof ApiError ? err.fields : undefined;
+
+		dirty.forEach(input => { input.disabled = false; note(input, failed?.[input.name]); });
+		syncPeekActions();
+		say((err as Error).message, 'error');
+	}
+}
+
+/** Puts the panel back the way the row says it is — the same rebuild a save ends with. */
+const cancelPeek = () => fillPeek();
 
 
 // --- Editing ---
@@ -383,6 +487,8 @@ async function main(): Promise<void> {
 	nav.replaceChildren(...tables.map(link));
 	toolbar.append(filters.element);
 	peekClose.addEventListener('click', dismissPeek);
+	peekForm.addEventListener('submit', e => { e.preventDefault(); void savePeek(); });
+	peekCancel.addEventListener('click', cancelPeek);
 	addEventListener('keydown', e => { if (e.key === 'Escape') dismissPeek(); });
 	route.onNavigate(render);
 	render();

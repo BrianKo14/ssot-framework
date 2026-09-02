@@ -1,6 +1,7 @@
 // Checking values on their way into the database, and reading them back out.
 
 import { HttpError } from '../errors.js';
+import type { FieldErrors } from '../shared/api.js';
 import type { ColumnInfo, Columns } from './model.js';
 
 /** Takes the keys the client sent and returns the matching schema columns, in the order the client sent them.
@@ -46,8 +47,8 @@ export function checkedValue(c: ColumnInfo, given: unknown, required: boolean): 
 }
 
 /** Every refusal a request collected, reported together rather than one at a time. */
-export function refuseAll(errors: string[]): void {
-	if (errors.length) throw new HttpError(400, errors.join('; '));
+export function refuseAll(errors: string[], fields?: FieldErrors): void {
+	if (errors.length) throw new HttpError(400, errors.join('; '), fields);
 }
 
 /** For each column, check the value against that column's type handler.
@@ -64,16 +65,16 @@ export function checkedValues(
 	required: boolean,
 ): Record<string, unknown> {
 	const values: Record<string, unknown> = {};
-	const errors: string[] = [];
+	const failed: [string, string][] = [];
 
 	for (const c of cols) {
 		const checked = checkedValue(c, raw[c.name], required);
 
 		if (checked.ok) values[c.name] = checked.value;
-		else errors.push(checked.error);
+		else failed.push([c.name, checked.error]);
 	}
 
-	refuseAll(errors);
+	refuseAll(failed.map(([, message]) => message), Object.fromEntries(failed));
 
 	return values;
 }

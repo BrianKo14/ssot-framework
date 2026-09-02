@@ -41,3 +41,11 @@ export interface SystemMeta {
 	defaultOperator: string;
 	formats: FormatMeta[];
 }
+
+/** One refusal per column name. */
+export type FieldErrors = Record<string, string>;
+
+export interface ErrorBody {
+	error: string;
+	fields?: FieldErrors;
+}

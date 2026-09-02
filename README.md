@@ -1,6 +1,6 @@
 # ssot-framework
 
-A framework that generates a backend (CRUD + auth) and a database schema from
+A framework that generates a backend and a database schema from
 one system definition, instead of writing SQL and endpoints by hand.
 
 ### Point `system-definition` at the local fork
@@ -31,8 +31,7 @@ fork, instead of downloading the real package. It's local to your machine.
 Running plain `npm install` again, or cloning this repo elsewhere, will not
 carry the link with it, and the build will fail.
 
-This is a temporary arrangement until the fork's change is published (see
-`DECISIONS.md`, *Dependencies*).
+This is a temporary arrangement until the fork's change is published.
 
 Whenever you change something in the fork, rebuild it (`npm run build`
 inside `system-definition`). This project reads its compiled `dist/`
@@ -55,6 +54,7 @@ default `PT8H`) and `COOKIE_SECURE` (`true`/`false`, default `false`).
 
 ```bash
 npm run build
+npm run db:reset
 npm run start
 ```
 

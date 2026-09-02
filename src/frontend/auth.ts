@@ -23,16 +23,14 @@ const view = byId('login'),
 	asRole = byId('account-role'),
 	out = el<HTMLButtonElement>('logout');
 
-/** The frontend token is an httpOnly cookie.
- * The browser attaches this to each request, the page can never read it. */
+/** The session token is an httpOnly cookie; the page never reads it directly. */
 const whoami = () => api<{ user: Session }>(AUTH).then(r => r.user);
 
-// Logging out (or session dying) just reloads the whole page.
 const restart = () => location.reload();
 
 const signedIn = (session: Session): Session => {
 	who.textContent = session.username;
-	asRole.textContent = session.role;		// what is on screen follows from this, so it is shown
+	asRole.textContent = session.role;
 	account.hidden = false;
 	view.hidden = true;
 
@@ -47,7 +45,7 @@ const attempt = async (accept: (s: Session) => void): Promise<void> => {
 		const { user } = await api<{ user: Session }>(AUTH,
 			sending('POST', { username: username.value, password: password.value }));
 
-		password.value = '';				// remove password from the DOM for security
+		password.value = '';				// don't leave the password sitting in the DOM
 		accept(signedIn(user));
 	} catch (err) {
 		problem.textContent = (err as Error).message;
@@ -58,8 +56,7 @@ const attempt = async (accept: (s: Session) => void): Promise<void> => {
 	}
 };
 
-/** Resolves only once the user is authenticated.
- * `main()` awaits this. */
+/** Resolves once a session exists; `main()` awaits this before drawing anything. */
 export async function authenticated(): Promise<Session> {
 	const existing = await whoami().catch(() => null);
 
@@ -73,7 +70,7 @@ export async function authenticated(): Promise<Session> {
 	});
 }
 
-/** 401 indicates the session has ended. */
+/** 401 means the session has ended. */
 export const sessionEnded = (err: unknown): boolean => err instanceof ApiError && err.status === 401;
 
 out.addEventListener('click', () => {

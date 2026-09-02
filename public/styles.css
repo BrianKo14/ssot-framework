@@ -23,6 +23,7 @@
 	--icon-expand: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9"/></svg>');
 	--icon-close: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>');
 	--icon-search: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.3"/><path d="M10.3 10.3 13.4 13.4"/></svg>');
+	--icon-plus: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.6" stroke-linecap="round"><path d="M8 3.4v9.2M3.4 8h9.2"/></svg>');
 }
 
 @media (prefers-color-scheme: dark) {
@@ -197,6 +198,60 @@ main > header {
 @media (prefers-reduced-motion: reduce) { #status[data-state="busy"]::before { animation-duration: 3s; } }
 
 
+/* --- Toolbar --- */
+
+/* One band: what reads the screen on the left, what can be done to it on the right. The rule
+   and the surface belong to the band, so its two halves sit on one strip however tall the
+   filter grows — and an empty toolbar (before `_meta` has answered) draws no stray rule. */
+#toolbar {
+	display: flex;
+	align-items: stretch;
+	border-bottom: 1px solid var(--line);
+	background: var(--surface);
+}
+#toolbar:empty { display: none; }
+
+/* What can be done to the screen showing, at the far end of the band. */
+.actions {
+	position: relative;			/* the containing block for its dropdown */
+	display: flex;
+	align-items: flex-start;
+	flex: none;
+	padding: .5rem 1rem .5rem 0;
+}
+.actions[hidden] { display: none; }		/* `display: flex` would otherwise outvote the attribute */
+
+/* The brand fill, same rule `#peek-save` reads: this is the screen's affirmative action, the
+   one button on the band that isn't a neutral control. */
+.actions button {
+	display: inline-flex;
+	align-items: center;
+	gap: .375rem;
+	min-height: 1.625rem;			/* a chip's height, so button and filter sit on one line */
+	padding: .0625rem .625rem;
+	border: 0;
+	border-radius: var(--radius);
+	background: var(--brand);
+	color: #06281b;				/* --brand is the same in both themes, so this can be fixed */
+	font: inherit;
+	font-size: .75rem;
+	font-weight: 600;
+	white-space: nowrap;
+	cursor: pointer;
+}
+.actions button::before {
+	content: "";
+	flex: none;
+	width: .75rem;
+	height: .75rem;
+	background: currentColor;
+	-webkit-mask: var(--icon-plus) center / contain no-repeat;
+	mask: var(--icon-plus) center / contain no-repeat;
+}
+.actions button:hover { filter: brightness(1.05); }
+.actions button[aria-expanded="true"] { filter: brightness(.95); }
+
+
 /* --- Filter bar --- */
 
 /* One strip that reads as a single search box: the magnifier, the conditions already asked for,
@@ -207,9 +262,9 @@ main > header {
 	display: flex;
 	align-items: flex-start;
 	gap: .625rem;
+	flex: 1;
+	min-width: 0;
 	padding: .5rem 1rem;
-	border-bottom: 1px solid var(--line);
-	background: var(--surface);
 	cursor: text;
 }
 .filters[hidden] { display: none; }		/* `display: flex` would otherwise outvote the attribute */
@@ -298,11 +353,11 @@ main > header {
 }
 .chip .x:hover { background: var(--hover); color: var(--ink); }
 
-/* The dropdown: the screen's own columns, then the comparisons the backend published. */
-.filters .menu {
+/* The dropdown, wherever it hangs from: the filter bar's steps, the toolbar's actions. Only
+   where it is anchored differs, so only that is said per box. */
+.menu {
 	position: absolute;
 	top: calc(100% - .25rem);
-	left: 2.5rem;
 	z-index: 5;				/* over the grid's sticky cells, and over the peek */
 	min-width: 15rem;
 	max-height: 17rem;
@@ -316,7 +371,9 @@ main > header {
 	list-style: none;
 	scrollbar-width: thin;
 }
-.filters .menu[hidden] { display: none; }
+.menu[hidden] { display: none; }
+.filters .menu { left: 2.5rem; }		/* under the box a condition is written in, past the magnifier */
+.actions .menu { right: 1rem; }			/* its right edge on the button's, inside the strip's padding */
 
 .menu li {
 	display: flex;
@@ -617,6 +674,32 @@ td.bad input { outline-color: var(--bad); }		/* refused, and still on screen to 
 	border-top: 1px solid var(--line);
 }
 #peek-actions[hidden] { display: none; }	/* `display: flex` would otherwise outvote the attribute */
+
+/* Destructive, so it sits apart from the two safe actions rather than beside them, and reads
+   as a warning before it is pressed at all. */
+#peek-delete {
+	margin-right: auto;			/* the footer ends flush right; this one keeps the left */
+	padding: .4375rem .75rem;
+	border: 1px solid color-mix(in srgb, var(--bad) 35%, var(--line));
+	border-radius: var(--radius);
+	background: var(--surface);
+	color: var(--bad);
+	font: inherit;
+	font-size: .8125rem;
+	cursor: pointer;
+}
+/* Darker, not lighter: a warning that brightens on hover reads as an invitation, which is the
+   opposite of what a delete button should do. */
+#peek-delete:hover:not(:disabled) { filter: brightness(.96); }
+
+/* Armed: the next press is the one that deletes, so it stops looking like a way out. */
+#peek-delete[data-armed="true"] {
+	border-color: transparent;
+	background: var(--bad);
+	color: var(--surface);
+	font-weight: 600;
+}
+#peek-delete:disabled { opacity: .5; cursor: default; }
 
 #peek-cancel {
 	padding: .4375rem .75rem;

@@ -1,4 +1,5 @@
-import type { ColumnMeta, SystemMeta, TableMeta } from '../shared/api.js';
+import type { Capability, ColumnMeta, SystemMeta, TableMeta } from '../shared/api.js';
+import { actionMenu, type Action, type ActionMenu } from './actions.js';
 import { api, ApiError, sending } from './api.js';
 import { authenticated, sessionEnded } from './auth.js';
 import { byId, classed, el } from './dom.js';
@@ -24,6 +25,7 @@ const 	nav = byId('entities'),
 	peekForm = byId('peek-form'),
 	peekFields = byId('peek-fields'),
 	peekActions = byId('peek-actions'),
+	peekDelete = byId('peek-delete') as HTMLButtonElement,
 	peekCancel = byId('peek-cancel') as HTMLButtonElement,
 	peekSave = byId('peek-save') as HTMLButtonElement,
 	peekClose = byId('peek-close');
@@ -69,8 +71,7 @@ const shown = <K extends 'td' | 'dd'>(tag: K, value: unknown) => {
 
 const header = (t: TableMeta) => (c: ColumnMeta) => named(el('th', c.name, el('small', c.type)), t, c);
 
-/** Whether this column may be written to, by this caller. Shared by the grid's cell and the
-    peek's field, so the two surfaces can never disagree about what's editable. */
+/** Shared by the grid's cell and the peek's field, so the two can't disagree on what's editable. */
 const writable = (t: TableMeta, c: ColumnMeta) => !t.pk.includes(c.name) && t.capabilities.includes('update');
 
 const cell = (t: TableMeta, row: Row) => (c: ColumnMeta) => {
@@ -84,7 +85,7 @@ const cell = (t: TableMeta, row: Row) => (c: ColumnMeta) => {
 	return td;
 };
 
-/** Builds a error note for a field, showing a message below it. */
+/** Shows (or clears) an error message under a field. */
 const note = (input: HTMLInputElement, message?: string) => {
 	input.classList.toggle('bad', message !== undefined);
 	input.parentElement?.querySelector('.bad-note')?.remove();
@@ -112,7 +113,7 @@ const peekInput = (c: ColumnMeta, row: Row): HTMLInputElement => {
 	input.placeholder = c.expected;
 	input.title = `${c.name}: ${c.type} — ${c.expected}`;
 	input.addEventListener('input', () => {
-		note(input);				// the refusal was about the value that has just changed
+		note(input);				// clear any refusal — it was about the old value
 		input.classList.toggle('dirty', input.value !== input.dataset.original);
 		syncPeekActions();
 	});
@@ -120,8 +121,9 @@ const peekInput = (c: ColumnMeta, row: Row): HTMLInputElement => {
 	return input;
 };
 
-const field = (t: TableMeta, row: Row) => (c: ColumnMeta) =>
-	[named(el('dt', c.name), t, c), writable(t, c) ? el('dd', peekInput(c, row)) : shown('dd', row[c.name])];
+const field = (p: Peeked) => (c: ColumnMeta) =>
+	[named(el('dt', c.name), p.t, c),
+		p.writable(c) ? el('dd', peekInput(c, p.row)) : shown('dd', p.row[c.name])];
 
 /** The grid's sticky leading column. */
 const lead = (tag: 'th' | 'td', ...children: Node[]) => {
@@ -138,13 +140,13 @@ const opener = (t: TableMeta, row: Row) => {
 	button.type = 'button';
 	button.title = 'Ver registro';
 	button.setAttribute('aria-label', 'Ver registro');
-	button.addEventListener('click', () => openPeek(t, row, button));
+	button.addEventListener('click', () => show(record(t, row, button)));
 
 	return lead('td', button);
 };
 
-/** The one place a row's cells are written. The lead cell is kept, not rebuilt: the peek holds
-    that button, and a fresh one would leave the row it marked unmarkable. */
+/** The one place a row's cells are written. The lead cell is kept, not rebuilt — a fresh one
+    would drop the peek's reference to the button that marks this row open. */
 const fill = (tr: HTMLTableRowElement, t: TableMeta, row: Row) => {
 	tr.replaceChildren(tr.querySelector('.lead') ?? opener(t, row), ...t.columns.map(cell(t, row)));
 
@@ -169,64 +171,88 @@ const summary = (t: TableMeta) =>
 
 // --- Row peek ---
 
-/** The open row: the button that opened it, so the row stays marked, and its key, so the
-    address can name it and a redraw can find it again. */
-let opened: { button: HTMLButtonElement; t: TableMeta; row: Row; key: string[] } | null = null;
+/** What the side panel is showing: a record the grid drew, or a row being drafted for insert.
+    Same panel either way — only these differ. */
+interface Peeked {
+	t: TableMeta;
+	row: Row;
+	/** Empty for a draft: it is not a record until it has been saved. */
+	key: string[];
+	/** The grid button that opened it, so its row stays marked. None for a draft. */
+	button?: HTMLButtonElement;
+	/** Focus target on close. */
+	from: HTMLElement;
+	title: string;
+	needs: Capability;
+	writable(c: ColumnMeta): boolean;
+	/** Focus target on open: a record is there to be read, a draft to be written. */
+	landing(): HTMLElement;
+	save(typed: Row): Promise<void>;
+	/** Absent on a draft: there is nothing there yet to delete. */
+	remove?(): Promise<void>;
+}
 
-/** @param restore give the focus back to the row — for a close the user asked for, not for one
-    the screen did on its way to replacing that row anyway. */
+/** The panel's one occupant. */
+let opened: Peeked | null = null;
+
+/** @param restore whether this is a user-initiated close, vs. one the screen did on its way
+    to redrawing (in which case the address should not change). */
 const closePeek = (restore = false) => {
-	opened?.button.closest('tr')?.classList.remove('open');
+	opened?.button?.closest('tr')?.classList.remove('open');
 
-	if (restore) opened?.button.focus();
+	if (restore) opened?.from.focus();
 
 	const was = opened !== null;
 
 	opened = null;
 	peek.hidden = true;
 
-	// A close the user asked for is a move, so the address stops naming the record. A close the
-	// screen did is not: it is on its way to drawing whatever the address already says.
 	if (restore && was) route.mark(here());
 };
 
 const dismissPeek = () => closePeek(true);
 
-/** Writes the panel from what the row holds now. Rebuilding the fields is what clears any
-    unsaved edit: a fresh input's value and its `data-original` are the same string. */
+/** Redraws the panel from what it is showing now; rebuilding the fields clears any unsaved edit. */
 const fillPeek = () => {
 	if (!opened) return;
 
-	const { t, row } = opened;
+	const { t } = opened;
+
+	// each button, and the footer, shown only where its own action is allowed
+	const writes = t.capabilities.includes(opened.needs);
+	const removes = opened.remove !== undefined && t.capabilities.includes('delete');
 
 	peekEntity.textContent = t.table;
-	peekTitle.textContent = key(t, row).join(' · ') || 'Registro';
-	peekFields.replaceChildren(...t.columns.flatMap(field(t, row)));
-	peekActions.hidden = !t.capabilities.includes('update');
+	peekTitle.textContent = opened.title;
+	peekFields.replaceChildren(...t.columns.flatMap(field(opened)));
+	peekCancel.hidden = peekSave.hidden = !writes;
+	peekDelete.hidden = !removes;
+	peekActions.hidden = !writes && !removes;
+	disarmDelete();
 	syncPeekActions();
 };
 
-/** Matched by key, not by identity: a row the grid has just drawn again is the same record. An
-    edit in progress here is not one of those redraws — it must survive them — so it is left
-    alone rather than overwritten from under the person typing it. */
+/** Updates the shown row after the grid redraws it — unless the panel has unsaved edits, or
+    isn't showing this record at all (a draft never matches: it has no key). */
 const refreshPeek = (row: Row) => {
-	if (!opened || !same(opened.key, key(opened.t, row))) return;
+	if (!opened?.key.length || !same(opened.key, key(opened.t, row))) return;
 
 	opened.row = row;
 	if (!peekFields.querySelector('input.dirty')) fillPeek();
 };
 
-function openPeek(t: TableMeta, row: Row, button: HTMLButtonElement): void {
-	opened?.button.closest('tr')?.classList.remove('open');
-	opened = { button, t, row, key: key(t, row) };
-	button.closest('tr')?.classList.add('open');
+/** Opens the panel on what it is given, closing whatever it held. */
+function show(what: Peeked): void {
+	opened?.button?.closest('tr')?.classList.remove('open');
+	opened = what;
+	what.button?.closest('tr')?.classList.add('open');
 
 	fillPeek();
 
 	peek.hidden = false;
-	peekClose.focus();
+	what.landing().focus();
 
-	route.mark(here(opened.key));		// the screen already shows it; the address only says so
+	route.mark(here(what.key));		// the screen already shows it; the address only says so
 }
 
 /** Save and Cancel are enabled only while the panel disagrees with the row it is showing. */
@@ -237,19 +263,17 @@ const syncPeekActions = () => {
 	peekCancel.disabled = !dirty;
 };
 
-/** Every changed field goes in one request, not one PATCH per field: the row either takes the
-    whole edit or refuses it, never half of it. */
+/** Sends every changed field in one request — an untouched one is never sent at all. */
 async function savePeek(): Promise<void> {
 	if (!opened) return;
 
-	const { t, row } = opened;
 	const dirty = [...peekFields.querySelectorAll<HTMLInputElement>('input.dirty')];
 
 	if (!dirty.length) return;
 
-	const patch: Row = {};
+	const typed: Row = {};
 
-	for (const input of dirty) patch[input.name] = input.value.trim() === '' ? null : input.value;
+	for (const input of dirty) typed[input.name] = input.value.trim() === '' ? null : input.value;
 
 	peekSave.disabled = true;
 	peekCancel.disabled = true;
@@ -257,26 +281,19 @@ async function savePeek(): Promise<void> {
 	say('Guardando…', 'busy');
 
 	try {
-		const saved = await api<Row>(rowPath(t, row), sending('PATCH', patch));
-
-		// What lands on screen is the row as the database now holds it, not the typed text.
-		// Assigned into the same object the row and the grid hold.
-		Object.assign(row, saved);
-
-		const tr = opened.button.closest('tr');
-		if (tr?.isConnected) fill(tr, t, row);
-
-		fillPeek();		// rebuilt from the saved row: fresh fields, nothing left dirty
-		say(summary(t));
+		await opened.save(typed);
 	} catch (err) {
 		if (sessionEnded(err)) { location.reload(); return; }
 
-		// A refusal that names columns is shown under each field it named, and only those: the
-		// rest of the edit was fine. One that names none — a vanished row, a constraint — is not
-		// about any single value here, so it stays on the status line alone.
 		const failed = err instanceof ApiError ? err.fields : undefined;
 
-		dirty.forEach(input => { input.disabled = false; note(input, failed?.[input.name]); });
+		dirty.forEach(input => { input.disabled = false; });
+
+		// every field the refusal names, not just the ones sent — a required field left empty
+		// is never sent, so its own "is required" can only be shown by checking all of them
+		for (const input of peekFields.querySelectorAll<HTMLInputElement>('input'))
+			note(input, failed?.[input.name]);
+
 		syncPeekActions();
 		say((err as Error).message, 'error');
 	}
@@ -285,17 +302,104 @@ async function savePeek(): Promise<void> {
 /** Puts the panel back the way the row says it is — the same rebuild a save ends with. */
 const cancelPeek = () => fillPeek();
 
+/** Arms the button; the next press is the one that deletes. */
+const armDelete = () => {
+	peekDelete.dataset.armed = 'true';
+	peekDelete.textContent = '¿Eliminar?';
+};
+
+/** Resets the button to ask again before it acts. */
+const disarmDelete = () => {
+	peekDelete.disabled = false;
+	peekDelete.dataset.armed = 'false';
+	peekDelete.textContent = 'Eliminar';
+};
+
+async function removePeek(): Promise<void> {
+	const removing = opened?.remove;
+
+	if (!removing) return;
+
+	peekDelete.disabled = true;
+	say('Eliminando…', 'busy');
+
+	try {
+		await removing();
+	} catch (err) {
+		if (sessionEnded(err)) { location.reload(); return; }
+
+		// e.g. a row a detail still points at — names no field, so it goes on the status line
+		disarmDelete();
+		say((err as Error).message, 'error');
+	}
+}
+
+/** A record already in the grid — its pk addresses it, so the pk is read-only here too. */
+const record = (t: TableMeta, row: Row, button: HTMLButtonElement): Peeked => {
+	const id = key(t, row);
+
+	return {
+		t, row, button,
+		from: button,
+		key: id,
+		title: id.join(' · ') || 'Registro',
+		needs: 'update',
+		writable: c => writable(t, c),
+		landing: () => peekClose,
+		save: async typed => {
+			const saved = await api<Row>(rowPath(t, row), sending('PATCH', typed));
+
+			Object.assign(row, saved);		// keep what the server returned, not the typed text
+
+			const tr = button.closest('tr');
+			if (tr?.isConnected) fill(tr, t, row);
+
+			fillPeek();
+			say(summary(t));
+		},
+		remove: async () => {
+			await api<void>(rowPath(t, row), sending('DELETE'));
+
+			// back to the list; drawing it again is what stops the address naming a gone row
+			closePeek();
+			route.go(here());
+		},
+	};
+};
+
+/** A new row being inserted. Every column is writable — the pk included, since an insert sets
+    it — and the whole thing goes in one POST to the entity's collection. */
+const draft = (t: TableMeta, from: HTMLElement): Peeked => ({
+	t,
+	row: Object.fromEntries(t.columns.map(c => [c.name, null])),	// an all-null row
+	key: [],
+	from,
+	title: 'Nuevo registro',
+	needs: 'create',
+	writable: () => true,
+	landing: () => peekFields.querySelector('input') ?? peekClose,
+	save: async typed => {
+		const created = await api<Row>(`/api/${encodeURIComponent(t.table)}`, sending('POST', typed));
+
+		route.go(here(key(t, created)));	// go to the new record; drawing it lists it in
+	},
+});
+
+/** The one action the toolbar offers so far. */
+const insertRow: Action = {
+	text: 'Insertar fila',
+	needs: 'create',
+	run: t => show(draft(t, inserts.button)),
+};
+
 
 // --- Editing ---
 
 /** The cell being edited — one at a time, so opening another can call it off. */
 let editing: { td: HTMLTableCellElement; cancel: () => void } | null = null;
 
-/** A cell opens into the one editor the framework has: a text box.
- *
- * Every type handler already reads its own value out of text, so the screen sends what was typed
- * and the column's handler is the only thing that judges it. A widget chosen per type would be a
- * second place that knows what a `date` is. An empty box is `null`, for every type. */
+/** A cell opens into one text box, for every type: the column's own handler reads it back, so
+    the screen never needs a per-type widget. An empty box is `null`. */
 function edit(t: TableMeta, row: Row, c: ColumnMeta, td: HTMLTableCellElement): void {
 	if (editing?.td === td) return;			// a double-click *inside* the open editor selects a word
 
@@ -334,9 +438,7 @@ function edit(t: TableMeta, row: Row, c: ColumnMeta, td: HTMLTableCellElement): 
 			const saved = await api<Row>(rowPath(t, row),
 				sending('PATCH', { [c.name]: input.value.trim() === '' ? null : input.value }));
 
-			// What lands on screen is the row as the database now holds it, not the typed text.
-			// Assigned into the same object the row and the peek hold.
-			Object.assign(row, saved);
+			Object.assign(row, saved);		// keep what the server returned, not the typed text
 			editing = null;
 
 			if (tr?.isConnected) fill(tr, t, row);
@@ -387,15 +489,14 @@ let screen: TableMeta | null = null;
 
 /** Built in `main`, once `_meta` has answered. */
 let filters!: FilterBar;
+let inserts!: ActionMenu;
 let route!: Router;
 
-/** The address for what is on screen now. Assembled from the screen and the bar themselves,
-    never from a second copy of what they hold. */
+/** The address for what is on screen now, assembled from the screen and the bar themselves. */
 const here = (record: string[] = []): View =>
 	({ screen: screen?.table ?? '', key: record, conditions: filters.conditions() });
 
-/** The rows the screen is asking for now. The filter is read off the bar rather than handed in,
-    so arriving at a screen and changing its filter ask the same question. */
+/** Fetches rows for the screen, under whatever filter the bar currently holds. */
 async function load(t: TableMeta): Promise<Row[]> {
 	blank();
 	say('Cargando…', 'busy');
@@ -410,26 +511,24 @@ async function load(t: TableMeta): Promise<Row[]> {
 	return data;
 }
 
-/** Opens the record the address names, when the grid drew it. Rows and their `tr`s are in step,
-    so the row that matched names the button that marks it. */
+/** Opens the record the address names, if the grid drew it. */
 const reopen = (t: TableMeta, wanted: string[], data: Row[]): boolean => {
 	const i = data.findIndex(row => same(key(t, row), wanted));
 	const button = gridRows.children[i]?.querySelector('button');
 
 	if (!(button instanceof HTMLButtonElement)) return false;
 
-	openPeek(t, data[i], button);
+	show(record(t, data[i], button));
 
 	return true;
 };
 
 /** Draws what the address says. Every move — a link, the filter bar, Back — ends here, so what
-    is on screen and what the address says cannot come apart. */
+    is on screen and the address can't come apart. */
 async function draw(): Promise<void> {
 	const { view, unresolved } = route.read();
 	const t = tables.find(x => x.table === view.screen);
 
-	// An address naming no screen this user has is not a place to be: rewritten, not added to.
 	if (!t) { route.go({ screen: tables[0].table, key: [], conditions: [] }, true); return; }
 
 	for (const a of nav.querySelectorAll('a'))
@@ -437,11 +536,12 @@ async function draw(): Promise<void> {
 
 	heading.textContent = t.table;
 	screen = t;
-	filters.reset(t, view.conditions);	// a filter names columns, so it belongs to the screen that has them
+	filters.reset(t, view.conditions);
+	inserts.reset(t);
 
 	const data = await load(t);
 
-	// What the address asked for and did not get is said, not silently dropped.
+	// report anything the address asked for that wasn't found, rather than dropping it silently
 	const notes = [
 		...unresolved.map(name => `filtro ignorado: ${name}`),
 		...(view.key.length && !reopen(t, view.key, data)
@@ -460,8 +560,7 @@ const fail = (err: Error) => {
 
 const render = () => void draw().catch(fail);
 
-// A filter change is a move like any other: it names a new address, and drawing it reloads.
-// The record open on the old filter is not carried over — it may not be in the new answer.
+// a filter change is a move like any other: it names a new address, and drawing it reloads
 const refilter = () => { if (screen) route.go(here()); };
 
 
@@ -482,13 +581,16 @@ async function main(): Promise<void> {
 	if (!tables.length) { say('No hay entidades disponibles para este usuario.'); return; }
 
 	filters = filterBar(meta.operators, refilter);
+	inserts = actionMenu('Insertar', [insertRow]);
 	route = router(meta);
 
 	nav.replaceChildren(...tables.map(link));
-	toolbar.append(filters.element);
+	toolbar.append(filters.element, inserts.element);
 	peekClose.addEventListener('click', dismissPeek);
 	peekForm.addEventListener('submit', e => { e.preventDefault(); void savePeek(); });
 	peekCancel.addEventListener('click', cancelPeek);
+	peekDelete.addEventListener('click',
+		() => { if (peekDelete.dataset.armed === 'true') void removePeek(); else armDelete(); });
 	addEventListener('keydown', e => { if (e.key === 'Escape') dismissPeek(); });
 	route.onNavigate(render);
 	render();

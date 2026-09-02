@@ -2,6 +2,7 @@
 
 import type { ColumnMeta, FilterCondition, OperatorMeta, TableMeta } from '../shared/api.js';
 import { classed, el } from './dom.js';
+import { menu, type Option } from './menu.js';
 import { type Condition, operand } from './route.js';
 
 /** The condition being written: a column, then a comparison, then a value. */
@@ -10,7 +11,7 @@ interface Draft {
 	operator?: OperatorMeta;
 }
 
-/** One line of the dropdown. `take` moves the draft on to the next step. */
+/** One thing the dropdown can offer here. `take` moves the draft on to the next step. */
 interface Choice {
 	text: string;
 	hint: string;
@@ -20,40 +21,34 @@ interface Choice {
 export interface FilterBar {
 	readonly element: HTMLElement;
 	reset(t: TableMeta, seed?: Condition[]): void;
-	/** @returns the conditions that have been applied to the filter bar. */
 	conditions(): Condition[];
-	/** @returns SQL WHERE clause. */
+	/** The current filter as a `?filter=` value, or `undefined` when there is none. */
 	query(): string | undefined;
 }
 
-/** 
+/**
  * @param operators the comparisons the backend offers, taken from `_meta`
- * @param apply called when the answer to `query()` has changed */
+ * @param apply called whenever `query()`'s answer changes
+ */
 export function filterBar(operators: OperatorMeta[], apply: () => void): FilterBar {
 	const entry = el('input');
 	const draft = classed('span', 'chip draft');
 	const chips = classed('div', 'chips');
-	const menu = classed('ul', 'menu');
-	const element = classed('div', 'filters', chips, menu);
+	const element = classed('div', 'filters', chips);
+	const list = menu(entry, element);
 
+	element.append(list.element);
 	element.hidden = true;
-	menu.hidden = true;
-	menu.id = 'filter-menu';
-	menu.setAttribute('role', 'listbox');
 	entry.type = 'text';
 	entry.autocomplete = 'off';
 	entry.setAttribute('role', 'combobox');
 	entry.setAttribute('aria-autocomplete', 'list');
-	entry.setAttribute('aria-controls', menu.id);
 	entry.setAttribute('aria-label', 'Filtrar');
 
 	let table: TableMeta | null = null;
 	let applied: Condition[] = [];
 	let being: Draft = {};
 
-	let showing: Choice[] = [];
-	let lines: HTMLElement[] = [];
-	let active = 0;						// the highlighted line
 	let restoring = false;					// when the box is redrawn, keep focus on the entry
 
 
@@ -73,45 +68,18 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 		return [];
 	};
 
-	const mark = () => lines.forEach((li, i) => li.setAttribute('aria-selected', String(i === active)));
-
-	const line = (choice: Choice, i: number) => {
-		const li = classed('li', 'option', el('span', choice.text), classed('span', 'hint', choice.hint));
-
-		li.setAttribute('role', 'option');
-		li.addEventListener('mousedown', e => { e.preventDefault(); choose(choice); });	// keeps the box focused
-		li.addEventListener('mousemove', () => { active = i; mark(); });
-
-		return li;
-	};
+	const line = (choice: Choice): Option =>
+		({ text: choice.text, hint: choice.hint, pick: () => choose(choice) });
 
 	const openMenu = () => {
 		const offered = choices();
 
-		if (!offered.length) { closeMenu(); return; }
+		if (!offered.length) { list.close(); return; }
 
 		const typed = entry.value.trim().toLowerCase();
 
-		showing = offered.filter(o => !typed || `${o.text} ${o.hint}`.toLowerCase().includes(typed));
-		lines = showing.map(line);
-
-		if (active >= lines.length) active = 0;
-
-		menu.replaceChildren(
-			classed('li', 'head', being.column ? 'Comparación' : 'Columna'),
-			...(lines.length ? lines : [classed('li', 'none', 'Sin coincidencias')]));
-
-		menu.hidden = false;
-		entry.setAttribute('aria-expanded', 'true');
-		mark();
-	};
-
-	const closeMenu = () => {
-		menu.hidden = true;
-		entry.setAttribute('aria-expanded', 'false');
-		showing = [];
-		lines = [];
-		active = 0;
+		list.open(being.column ? 'Comparación' : 'Columna',
+			offered.filter(o => !typed || `${o.text} ${o.hint}`.toLowerCase().includes(typed)).map(line));
 	};
 
 	const choose = (choice: Choice) => {
@@ -205,7 +173,7 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 		entry.value = '';
 
 		redraw();
-		closeMenu();
+		list.close();
 		apply();
 	};
 
@@ -227,24 +195,16 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 		openMenu();
 	};
 
-	const step = (by: number) => {
-		if (menu.hidden) { openMenu(); return; }
-		if (!lines.length) return;
-
-		active = (active + by + lines.length) % lines.length;
-
-		mark();
-		lines[active].scrollIntoView({ block: 'nearest' });
-	};
+	const step = (by: number) => { if (list.isOpen()) list.step(by); else openMenu(); };
 
 	const keys = new Map<string, (e: KeyboardEvent) => void>([
 		['ArrowDown', e => { e.preventDefault(); step(1); }],
 		['ArrowUp', e => { e.preventDefault(); step(-1); }],
-		['Enter', e => { e.preventDefault(); if (menu.hidden || !showing[active]) commit(); else choose(showing[active]); }],
+		['Enter', e => { e.preventDefault(); const one = list.current(); if (one) one.pick(); else commit(); }],
 		['Escape', e => {
 			e.stopPropagation();				// the peek's Escape must not fire too
 
-			if (!menu.hidden) closeMenu();
+			if (list.isOpen()) list.close();
 			else if (being.column) discard();
 		}],
 		['Backspace', e => {
@@ -255,7 +215,7 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 		}],
 	]);
 
-	entry.addEventListener('input', () => { active = 0; resize(); openMenu(); });
+	entry.addEventListener('input', () => { resize(); openMenu(); });
 	entry.addEventListener('focus', () => { if (!restoring) openMenu(); });
 	entry.addEventListener('keydown', e => keys.get(e.key)?.(e));
 
@@ -267,19 +227,15 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 		openMenu();
 	});
 
-	addEventListener('mousedown', e => {
-		if (e.target instanceof Node && !element.contains(e.target)) closeMenu();
-	}, true);
-
 
 	// --- What the screen asks of it ---
 
-	const encode = (list: Condition[]) => {
-		if (!list.length) return undefined;
+	const encode = (all: Condition[]) => {
+		if (!all.length) return undefined;
 
 		const filter = new Map<string, FilterCondition[]>();
 
-		for (const a of list)
+		for (const a of all)
 			filter.set(a.column.name,
 				[...filter.get(a.column.name) ?? [], { op: a.operator.name, value: a.value }]);
 
@@ -296,7 +252,7 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 		being = {};
 		entry.value = '';
 
-		closeMenu();
+		list.close();
 		redraw();
 		element.hidden = false;
 	};

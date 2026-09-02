@@ -12,30 +12,25 @@ export interface Condition {
 
 /** What is on screen, per the address. */
 export interface View {
-	/** The entity being viewed; `''` when the address names none. */
+	/** `''` when the address names no screen. */
 	screen: string;
-	/** The open record's pk values in declaration order. Empty when no record is open. */
+	/** The open record's pk values, in order; empty when no record is open. */
 	key: string[];
 	conditions: Condition[];
 }
 
-/** The result of reading the address. */
 export interface Reading {
 	view: View;
-	/** When a query parameter cannot be resolved to a column or operator, it is reported here. */
+	/** Query params that named no known column or operator. */
 	unresolved: string[];
 }
 
 export interface Router {
-	/** Given a URL, returns the view. */
 	read(): Reading;
-	/** Given a view, returns the URL. */
 	href(view: View): string;
-	/** Navigates to a view. */
 	go(view: View, replace?: boolean): void;
-	/** Update the address to match view. */
+	/** Updates the address without redrawing — for moves the screen already reflects. */
 	mark(view: View, replace?: boolean): void;
-	/** Callback for when the address changes. */
 	onNavigate(draw: () => void): void;
 }
 
@@ -49,13 +44,11 @@ const decoded = (raw: string): string => {
 	try { return decodeURIComponent(raw); } catch { return raw; }
 };
 
-/** Compare two arrays of strings for equality. */
 export const same = (a: string[], b: string[]) => a.length === b.length && a.every((v, i) => v === b[i]);
 
 
 // --- The router ---
 
-/** Reads / writes the address bar and manages navigation. */
 export function router(meta: SystemMeta): Router {
 	const operator = (name: string) => meta.operators.find(o => o.name === name);
 	const fallback = operator(meta.defaultOperator);
@@ -111,7 +104,7 @@ export function router(meta: SystemMeta): Router {
 		const url = href(view);
 		const stay = replace || url === location.pathname + location.search;
 
-		history[stay ? 'replaceState' : 'pushState'](null, '', url); // only add to history when the address actually changes
+		history[stay ? 'replaceState' : 'pushState'](null, '', url);	// only push when the address actually changes
 	};
 
 	const go = (view: View, replace = false) => { mark(view, replace); draw?.(); };

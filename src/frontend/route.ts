@@ -70,7 +70,7 @@ export function router(meta: SystemMeta): Router {
 
 	const read = (): Reading => {
 		const [screen = '', ...key] = location.pathname.split('/').filter(s => s !== '').map(decoded);
-		const t = meta.tables.find(x => x.table === screen);
+		const t = meta.tables.find(x => x.entity === screen);
 		const conditions: Condition[] = [];
 		const unresolved: string[] = [];
 

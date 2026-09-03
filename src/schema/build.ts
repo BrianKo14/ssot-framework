@@ -8,8 +8,8 @@ import { DEFAULT_SCHEMA } from '../sql/identifier.js';
 import { accessOf, type AccessDef } from './access.js';
 import type { ColumnInfo, Columns, ReferenceInfo, TableInfo } from './model.js';
 
-export { defineEntities, defineEntity } from 'system-definition';
-export type { EntityDef, FieldDef, RecordDef, TypeCollection } from 'system-definition';
+export { defineEntities, defineEntity, inSchema } from 'system-definition';
+export type { EntityDef, FieldDef, InSchemaOf, RecordDef, TypeCollection } from 'system-definition';
 
 /** The descriptive TypeCollection implied by a set of handlers */
 export const typeCollectionOf = <H extends TypeHandlers>(handlers: H): TypeCollectionOf<H> =>
@@ -23,6 +23,16 @@ const namedColumn = (columns: Columns, where: string) => (name: string): ColumnI
 
 	return column;
 };
+
+/** The local part of an entity's identity, e.g. `reserva` from `ventas.reserva` */
+function localName(entity: string, schema: string): string {
+	const local = entity.startsWith(`${schema}.`) ? entity.slice(schema.length + 1) : entity;
+
+	if (local.includes('.'))
+		throw new Error(`entity "${entity}": a name may only be qualified by its own schema, "${schema}"`);
+
+	return local;
+}
 
 /** Reduces one completed entity to the facts the SQL layer consumes.
  * Except its fks, which are resolved in a second pass once every table exists.
@@ -46,9 +56,12 @@ function tableInfo(
 
 	const byName: Columns = new Map(columns.map(c => [c.name, c]));
 
+	const schema = info.schema ?? DEFAULT_SCHEMA;
+
 	return {
-		schema: info.schema ?? DEFAULT_SCHEMA,
-		table: entityName, 			// note: internally, we extrapolate a physical table name from the entity name, we don't let the schema author name it
+		entity: entityName,			// the identity the author writes: fks, access and URLs all name this
+		schema,
+		table: localName(entityName, schema),
 		pk: info.pk.map(namedColumn(byName, `entity "${entityName}": primary key`)),
 		uks: Object.fromEntries(Object.entries(info.uks).map(([uk, fields]) =>
 			[uk, fields.map(namedColumn(byName, `entity "${entityName}": unique key "${uk}"`))])),
@@ -68,18 +81,18 @@ const isKeyOf = (t: TableInfo, columns: ColumnInfo[]): boolean =>
 /** Resolves foreign keys between tables. */
 function linkReferences(from: TableInfo, fks: EntityInfo<TypeCollection>['fks'], tables: Map<string, TableInfo>): void {
 	for (const [name, fk] of Object.entries(fks)) {
-		const where = `entity "${from.table}", foreign key "${name}"`;
+		const where = `entity "${from.entity}", foreign key "${name}"`;
 		const to = tables.get(fk.entity);
 
 		if (!to) throw new Error(`${where}: unknown entity "${fk.entity}"`);
 
 		const pairs = Object.entries(fk.fields);
 		const columns = pairs.map(([own]) => namedColumn(from.byName, where)(own));
-		const targetColumns = pairs.map(([, target]) => namedColumn(to.byName, `${where}, in "${to.table}",`)(target));
+		const targetColumns = pairs.map(([, target]) => namedColumn(to.byName, `${where}, in "${to.entity}",`)(target));
 
 		if (!isKeyOf(to, targetColumns))
 			throw new Error(`${where}: (${targetColumns.map(c => c.name).join(', ')}) is neither `
-				+ `the primary key nor a unique key of "${to.table}"`);
+				+ `the primary key nor a unique key of "${to.entity}"`);
 
 		const reference: ReferenceInfo = {
 			name, from, to, columns, targetColumns,

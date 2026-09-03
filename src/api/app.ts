@@ -1,6 +1,6 @@
 import path from 'node:path';
 import express from 'express';
-import { authTables } from '../auth/entities.js';
+import { AUTH_SCHEMA, authTables } from '../auth/entities.js';
 import type { Authenticator } from '../auth/store.js';
 import type { AppConfig } from '../config.js';
 import type { Db } from '../db/postgres.js';
@@ -17,13 +17,18 @@ const PUBLIC_DIR = path.join(import.meta.dirname, '..', '..', 'public');
 const SCREEN = /^(?!\/api(\/|$))/;
 
 /** Reserved entity names. */
-const RESERVED = new Set([META, AUTH, ...authTables.map(t => t.table)]);
+const RESERVED = new Set([META, AUTH, ...authTables.map(t => t.entity)]);
 
 /** A schema with taken name should fail at startup. */
 const refuseReserved = (tables: TableInfo[]): void => {
-	const taken = tables.map(t => t.table).filter(name => RESERVED.has(name));
+	const taken = tables.map(t => t.entity).filter(name => RESERVED.has(name));
 
 	if (taken.length) throw new Error(`entity name(s) reserved by the framework: ${taken.join(', ')}`);
+
+	// We forbid any app entity from entering the auth schema
+	const intruding = tables.filter(t => t.schema === AUTH_SCHEMA).map(t => t.entity);
+
+	if (intruding.length) throw new Error(`schema "${AUTH_SCHEMA}" is reserved by the framework: ${intruding.join(', ')}`);
 };
 
 

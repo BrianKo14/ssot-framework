@@ -15,7 +15,7 @@ const columnMeta = (c: ColumnInfo): ColumnMeta =>
 
 /** Everything about a table. Yet unfiltered by access control. */
 const tableMeta = (t: TableInfo): Omit<TableMeta, 'capabilities'> =>
-	({ table: t.table, pk: t.pk.map(c => c.name), columns: t.columns.map(columnMeta) });
+	({ entity: t.entity, pk: t.pk.map(c => c.name), columns: t.columns.map(columnMeta) });
 
 
 export function metaRouter(tables: TableInfo[]): Router {

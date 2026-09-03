@@ -1,6 +1,6 @@
 // The framework's users, credentials and sessions
 
-import { defineEntities, defineEntity, type RecordDef, tablesFrom, typeCollectionOf } from '../schema/build.js';
+import { defineEntities, defineEntity, inSchema, type RecordDef, tablesFrom, typeCollectionOf } from '../schema/build.js';
 import type { ColumnInfo, TableInfo } from '../schema/model.js';
 import { commonTypes, digest, password as passwordType, role, text } from '../types/builtin.js';
 
@@ -14,10 +14,10 @@ const authTypes = {
 
 const typeDefs = typeCollectionOf(authTypes);
 
-/** The framework's own tables live in their own namespace. */
-const AUTH_SCHEMA = 'auth';
+/** The framework's own tables live in their own namespace, which no app entity may enter. */
+export const AUTH_SCHEMA = 'auth';
 
-const entityDefs = defineEntities({
+const entityDefs = defineEntities({ ...inSchema(AUTH_SCHEMA, {
 
 	/** User's identity and profile.
 	 * Hold no secrets, so one could mount this entity to the screen later. */
@@ -30,7 +30,6 @@ const entityDefs = defineEntities({
 			active: { type: 'boolean', nullable: false },
 		} satisfies RecordDef<typeof typeDefs>,
 		fks: {},
-		schema: AUTH_SCHEMA,
 	}),
 
 	/** User's credentials. */
@@ -40,8 +39,7 @@ const entityDefs = defineEntities({
 			user: { type: 'username' },
 			hash: { type: 'secret', nullable: false },
 		} satisfies RecordDef<typeof typeDefs>,
-		fks: { user: { entity: 'user', fields: { user: 'username' } } },
-		schema: AUTH_SCHEMA,
+		fks: { user: { entity: `${AUTH_SCHEMA}.user`, fields: { user: 'username' } } },
 	}),
 
 	/** A live login session. */
@@ -53,10 +51,9 @@ const entityDefs = defineEntities({
 			created_at: { type: 'datetime', nullable: false },	// UTC timestamp of creation, see `now()` in `store.ts`
 			expires_at: { type: 'datetime', nullable: false },	// Idem.
 		} satisfies RecordDef<typeof typeDefs>,
-		fks: { user: { entity: 'user', fields: { user: 'username' } } },
-		schema: AUTH_SCHEMA,
+		fks: { user: { entity: `${AUTH_SCHEMA}.user`, fields: { user: 'username' } } },
 	}),
-});
+}) });
 
 /** Framework's tables.
  * Built separately and never mixed with the app's regular tables.
@@ -67,22 +64,22 @@ const entityDefs = defineEntities({
 export const authTables = tablesFrom(entityDefs, authTypes);
 
 const find = (name: string): TableInfo => {
-	const t = authTables.find(x => x.table === name);
+	const t = authTables.find(x => x.entity === name);
 
 	if (!t) throw new Error(`auth entity "${name}" is missing`);
 
 	return t;
 };
 
-export const userTable = find('user');
-export const credentialTable = find('credential');
-export const sessionTable = find('session');
+export const userTable = find(`${AUTH_SCHEMA}.user`);
+export const credentialTable = find(`${AUTH_SCHEMA}.credential`);
+export const sessionTable = find(`${AUTH_SCHEMA}.session`);
 
 /** A column in an auth table. */
 export const col = (t: TableInfo, name: string): ColumnInfo => {
 	const c = t.byName.get(name);
 
-	if (!c) throw new Error(`auth table "${t.table}" has no column "${name}"`);
+	if (!c) throw new Error(`auth table "${t.entity}" has no column "${name}"`);
 
 	return c;
 };

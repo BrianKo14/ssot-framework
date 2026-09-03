@@ -64,7 +64,7 @@ export function dbAuthenticator(db: Db, sessionTtl: string): Authenticator & {
 
 	/** SELECT <cols> FROM <table> WHERE <conds> */
 	async function rowsWhere(t: TableInfo, conds: string[], params: unknown[]): Promise<Record<string, unknown>[]> {
-		if (!conds.length) throw new Error(`refusing an unconditional read of "${t.table}"`);
+		if (!conds.length) throw new Error(`refusing an unconditional read of "${t.entity}"`);
 
 		const rows = await db.query(`select ${columnList(t.columns)} from ${tableRef(t)}${where(conds)}`, params);
 

@@ -46,7 +46,7 @@ const key = (t: TableMeta, row: Row) => t.pk.map(k => String(row[k]));
 
 /** The `/:pk0[/:pk1…]` route `crudRouter` mounts. */
 const rowPath = (t: TableMeta, row: Row) =>
-	[`/api/${encodeURIComponent(t.table)}`, ...key(t, row).map(encodeURIComponent)].join('/');
+	[`/api/${encodeURIComponent(t.entity)}`, ...key(t, row).map(encodeURIComponent)].join('/');
 
 
 // --- Rendering ---
@@ -222,7 +222,7 @@ const fillPeek = () => {
 	const writes = t.capabilities.includes(opened.needs);
 	const removes = opened.remove !== undefined && t.capabilities.includes('delete');
 
-	peekEntity.textContent = t.table;
+	peekEntity.textContent = t.entity;
 	peekTitle.textContent = opened.title;
 	peekFields.replaceChildren(...t.columns.flatMap(field(opened)));
 	peekCancel.hidden = peekSave.hidden = !writes;
@@ -379,7 +379,7 @@ const draft = (t: TableMeta, from: HTMLElement): Peeked => ({
 	writable: () => true,
 	landing: () => peekFields.querySelector('input') ?? peekClose,
 	save: async typed => {
-		const created = await api<Row>(`/api/${encodeURIComponent(t.table)}`, sending('POST', typed));
+		const created = await api<Row>(`/api/${encodeURIComponent(t.entity)}`, sending('POST', typed));
 
 		route.go(here(key(t, created)));	// go to the new record; drawing it lists it in
 	},
@@ -471,10 +471,10 @@ function edit(t: TableMeta, row: Row, c: ColumnMeta, td: HTMLTableCellElement): 
 }
 
 const link = (t: TableMeta) => {
-	const a = el('a', t.table);
+	const a = el('a', t.entity);
 
-	a.href = route.href({ screen: t.table, key: [], conditions: [] });
-	a.dataset.table = t.table;
+	a.href = route.href({ screen: t.entity, key: [], conditions: [] });
+	a.dataset.entity = t.entity;
 
 	return a;
 };
@@ -494,7 +494,7 @@ let route!: Router;
 
 /** The address for what is on screen now, assembled from the screen and the bar themselves. */
 const here = (record: string[] = []): View =>
-	({ screen: screen?.table ?? '', key: record, conditions: filters.conditions() });
+	({ screen: screen?.entity ?? '', key: record, conditions: filters.conditions() });
 
 /** Fetches rows for the screen, under whatever filter the bar currently holds. */
 async function load(t: TableMeta): Promise<Row[]> {
@@ -503,7 +503,7 @@ async function load(t: TableMeta): Promise<Row[]> {
 
 	const filter = filters.query();
 	const query = filter === undefined ? '' : `?filter=${encodeURIComponent(filter)}`;
-	const data = await api<Row[]>(`/api/${encodeURIComponent(t.table)}${query}`);
+	const data = await api<Row[]>(`/api/${encodeURIComponent(t.entity)}${query}`);
 
 	renderGrid(t, data);
 	say(summary(t));
@@ -527,14 +527,14 @@ const reopen = (t: TableMeta, wanted: string[], data: Row[]): boolean => {
     is on screen and the address can't come apart. */
 async function draw(): Promise<void> {
 	const { view, unresolved } = route.read();
-	const t = tables.find(x => x.table === view.screen);
+	const t = tables.find(x => x.entity === view.screen);
 
-	if (!t) { route.go({ screen: tables[0].table, key: [], conditions: [] }, true); return; }
+	if (!t) { route.go({ screen: tables[0].entity, key: [], conditions: [] }, true); return; }
 
 	for (const a of nav.querySelectorAll('a'))
-		a.setAttribute('aria-current', String(a.dataset.table === t.table));
+		a.setAttribute('aria-current', String(a.dataset.entity === t.entity));
 
-	heading.textContent = t.table;
+	heading.textContent = t.entity;
 	screen = t;
 	filters.reset(t, view.conditions);
 	inserts.reset(t);

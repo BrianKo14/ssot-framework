@@ -9,7 +9,7 @@ export interface ColumnMeta {
 export type Capability = 'read' | 'create' | 'update' | 'delete';
 
 export interface TableMeta {
-	table: string;
+	entity: string;		// the entity's identity, qualified when it is not in the default schema
 	pk: string[];		// column names, in declaration order
 	columns: ColumnMeta[];	// in declaration order; the order screens present them in
 	/** What *this* caller may do here. A table it cannot read is not sent at all. */

@@ -25,7 +25,7 @@ const masterParams = (ref: ReferenceInfo) => keyParams('mpk', ref.to.pk);
 
 
 /** e.g. `detailPath(ref)` -> `'/api/cursos/2026-1/algebra'` */
-const detailPath = (ref: ReferenceInfo) => `${segments(masterParams(ref))}/${ref.from.table}`;
+const detailPath = (ref: ReferenceInfo) => `${segments(masterParams(ref))}/${ref.from.entity}`;
 
 /** True iff the detail can be nested under its master's URL.
  * Only if its fk matches the master's *primary* key. */
@@ -99,7 +99,7 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 		const format = formatNamed(req.query.format);					// before the query: a bad format costs no round trip
 
 		await sendAs(res, format, {
-			name: t.table,
+			name: t.entity,
 			columns: t.columns,
 			pk: t.pk.map(c => c.name),
 			rows: await listRows(req),
@@ -197,11 +197,11 @@ export function entityRouter(db: Db, tables: TableInfo[]): Router {
 	const r = Router();
 
 	for (const t of tables) {					// per table CRUD router at /api/<table>
-		r.use(`/${t.table}`, crudRouter(db, t));
+		r.use(`/${t.entity}`, crudRouter(db, t));
 
 		// ...and mount each of its details' collections under it, at /api/<master>/<master key>/<detail>.
 		for (const ref of t.details.filter(isNestable))
-			r.use(`/${t.table}${detailPath(ref)}`, crudRouter(db, ref.from, ref));
+			r.use(`/${t.entity}${detailPath(ref)}`, crudRouter(db, ref.from, ref));
 	}
 
 	return r;

@@ -25,7 +25,7 @@ export const permit = (t: TableInfo): RequestHandler => (req, _res, next) => {
 	const role = req.principal?.role;		// the gate ran first, so there is one
 
 	if (can === undefined || role === undefined || !allows(t.access, role, can))
-		throw new HttpError(403, `not allowed to ${can ?? req.method.toLowerCase()} ${t.table}`);
+		throw new HttpError(403, `not allowed to ${can ?? req.method.toLowerCase()} ${t.entity}`);
 
 	next();
 };

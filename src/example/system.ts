@@ -1,24 +1,31 @@
 // The example system of an SSOT.
 // `index.ts` serves it; `schema.ts` creates its database.
 
-import { type AccessDef, CAPABILITIES } from '../schema/access.js';
-import { defineEntities, defineEntity, inSchema, type RecordDef, tablesFrom, typeCollectionOf } from '../schema/build.js';
-import { commonTypes, text } from '../types/builtin.js';
-import { textual, type TypeHandler } from '../types/handler.js';
+import { CAPABILITIES } from '../schema/access.js';
+import { boxType, defineEntities, defineEntity, defineTypes, inSchema, type RecordDef, tablesFrom } from '../schema/build.js';
+import { type BaseType, builtinTypeDefs, handlersFor } from '../types/registry.js';
+import { textual } from '../types/handler.js';
 
 
-// --- The system definition ---
+// --- THE SYSTEM DEFINITION ---
 
 // --> Types
-const email: TypeHandler<string> = {
+
+const emailBase: BaseType = attrs => ({
 	sqlType: 'text',
 	...textual('an e-mail address',
 		/^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-		m => [...m[0]].length <= 254 ? m[0] : undefined),
-};
+		m => [...m[0]].length <= (attrs?.kind === 'bound' ? attrs.maxLength : Infinity) ? m[0] : undefined),
+});
 
-const types = { ...commonTypes, nombre: text(100), email };
-const typeDefs = typeCollectionOf(types);
+const typeDefs = defineTypes({
+	...builtinTypeDefs,
+	nombre: { tsType: boxType<string>(), base: 'text', attrs: { kind: 'bound', maxLength: 100 } },
+	email: { tsType: boxType<string>(), attrs: { kind: 'bound', maxLength: 254 } },
+	importe: { tsType: boxType<string>(), base: 'decimal', attrs: { kind: 'decimal', precision: 12, scale: 2 } },
+});
+
+const types = handlersFor(typeDefs, { email: emailBase });
 
 // --> Structure
 const entityDefs = defineEntities({
@@ -30,6 +37,7 @@ const entityDefs = defineEntities({
 			email: { type: 'email' },
 		} satisfies RecordDef<typeof typeDefs>,
 		fks: {}, // TODO: if left out, `defineEntity` widens its fk parameter to the constraint
+		access: { admin: CAPABILITIES, sub: ['read', 'create'] },
 	}),
 
 	...inSchema('ventas', {
@@ -44,10 +52,11 @@ const entityDefs = defineEntities({
 				hora: { type: 'time' },
 				creado_en: { type: 'datetime' },
 				duracion: { type: 'interval' },
-				importe: { type: 'decimal' },
+				importe: { type: 'importe' },
 				confirmada: { type: 'boolean' },
 			} satisfies RecordDef<typeof typeDefs>,
 			fks: { cliente: { entity: 'cliente', fields: { cliente: 'id' } } },
+			access: { admin: CAPABILITIES, sub: ['read'] }
 		}),
 	}),
 
@@ -62,6 +71,19 @@ const entityDefs = defineEntities({
 				cantidad: { type: 'integer' },
 			} satisfies RecordDef<typeof typeDefs>,
 			fks: { reserva: { entity: 'ventas.reserva', fields: ['fecha', 'id'] } },
+			access: { admin: CAPABILITIES, sub: ['read'] }
+		}),
+
+		archivo: defineEntity({
+			pk: ['fecha', 'id'],
+			fields: {
+				fecha: { type: 'date' },
+				id: { type: 'integer' },
+				motivo: { type: 'nombre', nullable: false, isName: true },
+			} satisfies RecordDef<typeof typeDefs>,
+			fks: {},
+			table: 'archivo_2019',
+			access: { admin: CAPABILITIES, sub: ['read'] }
 		}),
 	}),
 
@@ -72,6 +94,7 @@ const entityDefs = defineEntities({
 				id: { type: 'integer' },
 			} satisfies RecordDef<typeof typeDefs>,
 			fks: {},
+			access: { admin: CAPABILITIES, sub: ['read'] }
 		}),
 	}),
 
@@ -82,19 +105,9 @@ const entityDefs = defineEntities({
 				id: { type: 'integer' },
 			} satisfies RecordDef<typeof typeDefs>,
 			fks: {},
+			access: { admin: CAPABILITIES, sub: ['read'] }
 		}),
 	}),
 });
 
-// --> Authorization policy
-const access = {
-	cliente: { admin: CAPABILITIES, sub: ['read', 'create'] },
-	'ventas.reserva': { admin: CAPABILITIES, sub: ['read'] },
-	'operacion.item': { admin: CAPABILITIES, sub: ['read'] },
-	'groupA.test': { admin: CAPABILITIES, sub: ['read'] },
-	'groupB.test': { admin: CAPABILITIES, sub: ['read'] },
-} satisfies AccessDef<typeof entityDefs>;
-
-
-
-export const tables = tablesFrom(entityDefs, types, access);
+export const tables = tablesFrom(entityDefs, types);

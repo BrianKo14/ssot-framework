@@ -33,12 +33,6 @@ export type TypeHandler<T> = Recogniser<T> & {
 /** Collection of handlers exported to the framework. */
 export type TypeHandlers = Record<string, TypeHandler<any>>;
 
-/** The TypeScript type of a handler, as in e.g. `let x : TsTypeOf<typeof handler> = ...` instead of `let x : integer`. */
-export type TsTypeOf<H> = H extends TypeHandler<infer T> ? T : never;
-
-/** Map: set of handlers -> their result types */
-export type TypeCollectionOf<H extends TypeHandlers> = { [K in keyof H]: { tsType: TsTypeOf<H[K]> } };
-
 
 
 // --- Combinators ---

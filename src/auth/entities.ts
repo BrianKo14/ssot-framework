@@ -1,18 +1,19 @@
 // The framework's users, credentials and sessions
 
-import { defineEntities, defineEntity, inSchema, type RecordDef, tablesFrom, typeCollectionOf } from '../schema/build.js';
+import { boxType, defineEntities, defineEntity, defineTypes, type RecordDef, inSchema, tablesFrom } from '../schema/build.js';
 import type { ColumnInfo, TableInfo } from '../schema/model.js';
-import { commonTypes, digest, password as passwordType, role, text } from '../types/builtin.js';
+import { password as passwordType } from '../types/builtin.js';
+import { builtinTypeDefs, handlersFor } from '../types/registry.js';
 
-const authTypes = {
-	...commonTypes,
-	username: text(60),		// login identifier
-	secret: text(200),		// PHC-format scrypt hash
-	digest,				// SHA-256 of a session token, see `digestOf` in `hash.ts`
-	role,				// what the access policy grants against, see `schema/access.ts`
-};
+const typeDefs = defineTypes({
+	...builtinTypeDefs,
+	username: { tsType: boxType<string>(), base: 'text', attrs: { kind: 'bound', maxLength: 60 } },
+	secret: { tsType: boxType<string>(), base: 'text', attrs: { kind: 'bound', maxLength: 200 } },
+	digest: { tsType: boxType<string>() },	// SHA-256 of a session token, see `digestOf` in `hash.ts`
+	role: { tsType: boxType<string>() },	// what the access policy grants against, see `schema/access.ts`
+});
 
-const typeDefs = typeCollectionOf(authTypes);
+const authTypes = handlersFor(typeDefs);
 
 /** The framework's own tables live in their own namespace, which no app entity may enter. */
 export const AUTH_SCHEMA = 'auth';

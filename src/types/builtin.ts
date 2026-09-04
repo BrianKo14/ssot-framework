@@ -53,13 +53,14 @@ export const integer = (min = INT4_MIN, max = INT4_MAX): TypeHandler<number> => 
  * Stored as `decimal`, not `numeric`: the two are the same Postgres type, and naming the storage
  * after the type means no domain is emitted for it — a domain `"decimal"` is one Postgres would
  * shadow with the grammar alias, which `SHADOWED` in `sql/ddl.ts` refuses outright. */
-export const decimal: TypeHandler<string> = {
-	sqlType: 'decimal',
-	...scalar('a number',
+export const decimal = (precision?: number, scale?: number): TypeHandler<string> => ({
+	sqlType: precision === undefined ? 'decimal' : `numeric(${precision}${scale === undefined ? '' : `,${scale}`})`,
+	...scalar(precision === undefined ? 'a number'
+			: `a number of at most ${precision} digits${scale === undefined ? '' : `, ${scale} after the point`}`,
 		raw => typeof raw === 'number' && Number.isFinite(raw) ? String(raw) : undefined,
 		raw => /^-?\d+(\.\d+)?$/.test(raw) ? raw : undefined),
 	cell: Number,
-};
+});
 
 /**
  * @param maxLength optionally bounded.
@@ -109,21 +110,6 @@ export const interval: TypeHandler<string> = {
 	sqlType: 'interval',
 	...textual('a duration (ISO-8601, e.g. P1DT2H30M)',
 		/^P(?!$)(\d+Y)?(\d+M)?(\d+W)?(\d+D)?(T(?!$)(\d+H)?(\d+M)?(\d+(\.\d+)?S)?)?$/),
-};
-
-
-
-// ==> Common types export
-
-export const commonTypes = {
-	text: text(),
-	integer: integer(),
-	boolean,
-	decimal,
-	date,
-	datetime,
-	time,
-	interval,
 };
 
 

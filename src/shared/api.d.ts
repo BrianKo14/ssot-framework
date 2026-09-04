@@ -5,8 +5,8 @@ export interface ColumnMeta {
 	expected: string;	// e.g. "a date (YYYY-MM-DD)"
 }
 
-/** What a user may do to a table. */
-export type Capability = 'read' | 'create' | 'update' | 'delete';
+import type { Capability } from 'system-definition';
+export type { Capability };
 
 export interface TableMeta {
 	entity: string;		// the entity's identity, qualified when it is not in the default schema

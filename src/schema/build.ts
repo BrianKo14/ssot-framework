@@ -1,19 +1,13 @@
 // Translates EntityDef (schema author's vocabulary) to TableInfo (backend facts).
-// This is the one framwework file that imports `system-definition`.
 
-import { boxType, completeEntity, type EntityDef, type EntityInfo, type TypeCollection } from 'system-definition';
-import type { Capability } from '../shared/api.js';
-import type { TypeCollectionOf, TypeHandlers } from '../types/handler.js';
-import { DEFAULT_SCHEMA } from '../sql/identifier.js';
-import { accessOf, type AccessDef } from './access.js';
+import { completeEntity, type EntityDef, type EntityInfo, type TypeCollection } from 'system-definition';
+import type { TypeHandlers } from '../types/handler.js';
+import { checkedName, DEFAULT_SCHEMA } from '../sql/identifier.js';
+import { accessOf } from './access.js';
 import type { ColumnInfo, Columns, ReferenceInfo, TableInfo } from './model.js';
 
-export { defineEntities, defineEntity, inSchema } from 'system-definition';
-export type { EntityDef, FieldDef, InSchemaOf, RecordDef, TypeCollection } from 'system-definition';
-
-/** The descriptive TypeCollection implied by a set of handlers */
-export const typeCollectionOf = <H extends TypeHandlers>(handlers: H): TypeCollectionOf<H> =>
-	Object.fromEntries(Object.keys(handlers).map(name => [name, { tsType: boxType() }])) as TypeCollectionOf<H>;
+export { boxType, CAPABILITIES, defineEntities, defineEntity, defineType, defineTypes, inSchema } from 'system-definition';
+export type { AccessDef, Capability, EntityDef, FieldDef, InSchemaOf, RecordDef, TypeCollection } from 'system-definition';
 
 /** Returns a function that resolves a column name to a ColumnInfo, or throws if the name is unknown. */
 const namedColumn = (columns: Columns, where: string) => (name: string): ColumnInfo => {
@@ -34,6 +28,18 @@ function localName(entity: string, schema: string): string {
 	return local;
 }
 
+/** Get the physical table name of an entity.
+ * If the entity declares a table name, use it. Else, use the entity's local name. */
+function physicalName(entity: string, info: EntityInfo<TypeCollection>, schema: string): string {
+	if (info.table === null) return localName(entity, schema);
+
+	if (info.table.includes('.'))
+		throw new Error(`entity "${entity}": table name "${info.table}" is qualified; `
+			+ `the namespace is the schema, "${schema}"`);
+
+	return checkedName(info.table, 'table');
+}
+
 /** Reduces one completed entity to the facts the SQL layer consumes.
  * Except its fks, which are resolved in a second pass once every table exists.
  * 
@@ -43,7 +49,6 @@ function tableInfo(
 	entityName: string,
 	info: EntityInfo<TypeCollection>,
 	handlers: TypeHandlers,
-	granted: Readonly<Record<string, readonly Capability[]>> | undefined,
 ): TableInfo {
 	const columns = Object.entries(info.fields).map(([name, field]): ColumnInfo => {
 		const typeName = String(field.type);
@@ -61,7 +66,7 @@ function tableInfo(
 	return {
 		entity: entityName,			// the identity the author writes: fks, access and URLs all name this
 		schema,
-		table: localName(entityName, schema),
+		table: physicalName(entityName, info, schema),
 		pk: info.pk.map(namedColumn(byName, `entity "${entityName}": primary key`)),
 		uks: Object.fromEntries(Object.entries(info.uks).map(([uk, fields]) =>
 			[uk, fields.map(namedColumn(byName, `entity "${entityName}": unique key "${uk}"`))])),
@@ -69,7 +74,7 @@ function tableInfo(
 		byName,
 		references: [],				// filled by linkReferences, later once every table exists
 		details: [],
-		access: accessOf(entityName, granted),
+		access: accessOf(entityName, info.access),
 	};
 }
 
@@ -106,18 +111,11 @@ function linkReferences(from: TableInfo, fks: EntityInfo<TypeCollection>['fks'],
 
 /** Maps a whole system definition to its tables.
  * @param entityDefs the entities of the system, keyed by entity name
- * @param handlers the system's domain types, the same set `typeCollectionOf` described
- * @param access who may do what to each entity. Omitted, every table denies everyone: a system
- * served with no stated policy exposes nothing, rather than everything. */
+ * @param handlers the system's domain types. */
 export function tablesFrom<TEntities extends Record<string, EntityDef<TypeCollection>>>(
 	entityDefs: TEntities,
 	handlers: TypeHandlers,
-	access: AccessDef<TEntities> = {},
 ): TableInfo[] {
-
-	// The access object is: entity name -> capability -> list of roles
-	const granted = access as Readonly<Record<string, Readonly<Record<string, readonly Capability[]>>>>;
-
 
 	// --- Build the table ---
 
@@ -127,15 +125,23 @@ export function tablesFrom<TEntities extends Record<string, EntityDef<TypeCollec
 
 	// 2. Info -> TableInfo (resolves type names to handlers, builds column maps, merges access)
 	const tables = new Map(completed.map(([name, info]) =>
-		[name, tableInfo(name, info, handlers, granted[name])]));
+		[name, tableInfo(name, info, handlers)]));
 
 	// 3. Resolve fks (needs every table to exist first)
 	for (const [name, info] of completed) linkReferences(tables.get(name)!, info.fks, tables);
 
-	// 4. Reject access rules for entities that don't exist
-	for (const name of Object.keys(granted))
-		if (!tables.has(name)) throw new Error(`access names unknown entity "${name}"`);
+	// 4. Check for table name collisions
+	const stored = new Map<string, string>();
 
+	for (const t of tables.values()) {
+		const at = `"${t.schema}"."${t.table}"`;
+		const first = stored.get(at);
+
+		if (first !== undefined)
+			throw new Error(`entities "${first}" and "${t.entity}" are both stored in table ${at}`);
+
+		stored.set(at, t.entity);
+	}
 
 	return [...tables.values()];
 }

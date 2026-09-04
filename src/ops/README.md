@@ -66,7 +66,7 @@ AUTH_PASSWORD='yourpassword' npm run auth:user -- brian --role admin --email bri
 ### Add users with narrower roles
 
 ```bash
-AUTH_PASSWORD='yourpassword' npm run auth:user -- emilio --role profesor
+AUTH_PASSWORD='yourpassword' npm run auth:user -- recepcion --role recepcion
 ```
 
 ## Using the API from the terminal
@@ -79,7 +79,7 @@ endpoint is `/api/_auth`.
 ```bash
 curl -X POST localhost:3000/api/_auth \
   -H 'content-type: application/json' \
-  -d '{"username":"ada","password":"yourpassword"}'
+  -d '{"username":"brian","password":"yourpassword"}'
 ```
 
 Returns `{"token": "...", ...}`, grab it, and:
@@ -87,13 +87,13 @@ Returns `{"token": "...", ...}`, grab it, and:
 ```bash
 TOKEN=$(curl -s -X POST localhost:3000/api/_auth \
   -H 'content-type: application/json' \
-  -d '{"username":"ada","password":"yourpassword"}' | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')
+  -d '{"username":"brian","password":"yourpassword"}' | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')
 ```
 
 ### Make authenticated requests
 
 ```bash
-curl localhost:3000/api/reserva -H "Authorization: Bearer $TOKEN"
+curl localhost:3000/api/ventas.reserva -H "Authorization: Bearer $TOKEN"
 ```
 
 ### Check who you are

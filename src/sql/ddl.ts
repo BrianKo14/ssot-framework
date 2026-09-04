@@ -70,9 +70,10 @@ const domainStatements = (byName: Map<string, string>): string[] =>
 const columnType = (c: ColumnInfo): string =>
 	needsDomain(c.typeName, c.type.sqlType) ? domainRef(c.typeName) : storageType(c.type.sqlType);
 
-/** e.g. `"nombre" varchar(100) not null` */
+/** e.g. `"nombre" varchar(100) not null default 'sin nombre'` */
 const columnDefinition = (c: ColumnInfo): string =>
-	`${q(checkedName(c.name, 'column'))} ${columnType(c)}${c.nullable ? '' : ' not null'}`;
+	`${q(checkedName(c.name, 'column'))} ${columnType(c)}${c.nullable ? '' : ' not null'}`
+	+ (c.defaultSql === null ? '' : ` default ${c.defaultSql}`);
 
 /** Generates the SQL statement for creating a table. */
 function tableStatement(t: TableInfo, taken: Set<string>): string {

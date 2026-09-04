@@ -28,7 +28,7 @@ const entityDefs = defineEntities({ ...inSchema(AUTH_SCHEMA, {
 			username: { type: 'username', isName: true },
 			email: { type: 'text' },
 			role: { type: 'role', nullable: false },
-			active: { type: 'boolean', nullable: false },
+			active: { type: 'boolean', nullable: false, defaultValue: { value: true } },
 		} satisfies RecordDef<typeof typeDefs>,
 		fks: {},
 	}),
@@ -88,7 +88,7 @@ export const col = (t: TableInfo, name: string): ColumnInfo => {
 /** What a password must look like.
  * The plaintext password is not stored, but it still has a type. */
 export const password: ColumnInfo =
-	{ name: 'password', typeName: 'password', nullable: false, isName: false, type: passwordType() };
+	{ name: 'password', typeName: 'password', nullable: false, isName: false, type: passwordType(), defaultSql: null };
 
 /** What a login request must carry. */
 export const loginFields: ColumnInfo[] = [col(userTable, 'username'), password];

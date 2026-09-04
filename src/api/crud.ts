@@ -57,9 +57,8 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 			fromMaster.push([c.name, mParams[master.to.pk.indexOf(master.targetColumns[i])]]);
 	}
 
-	/** Required on insert = not nullable AND wihtout a default.
-	 * But TODO: FieldDef has no default/generated at the moment. */
-	const requiredOnInsert = (c: ColumnInfo) => !c.nullable;
+	/** Required on insert = not nullable AND without a default. */
+	const requiredOnInsert = (c: ColumnInfo) => !c.nullable && c.defaultSql === null;
 
 	/** The row a request addresses. Path params are always strings. */
 	const addressedRow = (req: Request): Record<string, unknown> =>

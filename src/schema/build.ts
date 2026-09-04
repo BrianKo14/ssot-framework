@@ -4,6 +4,7 @@ import { completeEntity, type EntityDef, type EntityInfo, type TypeCollection } 
 import type { TypeHandlers } from '../types/handler.js';
 import { checkedName, DEFAULT_SCHEMA } from '../sql/identifier.js';
 import { accessOf } from './access.js';
+import { defaultSqlOf } from './defaults.js';
 import type { ColumnInfo, Columns, ReferenceInfo, TableInfo } from './model.js';
 
 export { boxType, CAPABILITIES, defineEntities, defineEntity, defineType, defineTypes, inSchema } from 'system-definition';
@@ -56,7 +57,10 @@ function tableInfo(
 
 		if (!type) throw new Error(`entity "${entityName}", field "${name}": unknown type "${typeName}"`);
 
-		return { name, typeName, nullable: field.nullable, isName: field.isName, type };
+		const defaultSql = defaultSqlOf(field.defaultValue, type, field.nullable,
+			`entity "${entityName}", field "${name}"`);
+
+		return { name, typeName, nullable: field.nullable, isName: field.isName, type, defaultSql };
 	});
 
 	const byName: Columns = new Map(columns.map(c => [c.name, c]));

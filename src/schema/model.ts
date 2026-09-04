@@ -10,6 +10,7 @@ export interface ColumnInfo {
 	nullable: boolean;
 	isName: boolean;
 	type: TypeHandler<any>;
+	defaultSql: string | null;
 }
 
 /** A table's columns by name. */

@@ -251,6 +251,30 @@ const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? on
 const summary = (t: TableMeta) =>
 	`${count(gridRows.childElementCount, 'registro')} · ${count(t.columns.length, 'campo')}`;
 
+/** What each capability is called on screen. `Record<Capability, …>` rather than a loose map:
+    a verb the vocabulary adds is then a compile error here, not a raw name on the screen. */
+const CAPABILITY_LABEL: Record<Capability, string> = {
+	read: 'Leer',
+	create: 'Insertar',
+	update: 'Modificar',
+	delete: 'Eliminar',
+};
+
+/** What the signed-in role may do on this table, beside its name.
+ *
+ * Only what is granted, and in the order `_meta` sent it — which is the vocabulary's own
+ * order, so the badges never reshuffle between screens. Drawing the denied ones greyed out
+ * would read well, but it would take a copy of the whole capability set living in the
+ * browser, and the frontend does not restate the model: it says what the schema told it. */
+const grants = (t: TableMeta) => {
+	const box = classed('span', 'grants',
+		...t.capabilities.map(c => classed('span', 'grant', CAPABILITY_LABEL[c] ?? c)));
+
+	box.title = `Lo que tu rol puede hacer en ${t.entity}`;
+
+	return box;
+};
+
 
 // --- Row peek ---
 
@@ -632,7 +656,7 @@ async function draw(): Promise<void> {
 	for (const a of nav.querySelectorAll('a'))
 		a.setAttribute('aria-current', String(a.dataset.entity === t.entity));
 
-	heading.textContent = t.entity;
+	heading.replaceChildren(t.entity, grants(t));
 	screen = t;
 	filters.reset(t, view.conditions);
 	inserts.reset(t);

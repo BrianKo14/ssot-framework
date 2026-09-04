@@ -164,6 +164,30 @@ main > header {
 	mask: var(--icon-table) center / contain no-repeat;
 }
 
+/* What the signed-in role may do here, beside the entity's name. Neutral, like the FK marker
+   and for the same reason: the accent belongs to the thing named, not to a list of verbs.
+   They may shrink away entirely before the name does — the name is what identifies the
+   screen, the verbs only qualify it. */
+#title .grants {
+	display: flex;
+	gap: .1875rem;
+	min-width: 0;
+	overflow: hidden;
+}
+/* The status pill's shape at the column markers' size, washed out rather than filled.
+   `color-mix` against `transparent` is how the rest of the sheet tints, so one rule
+   covers whichever theme is on. */
+#title .grant {
+	flex: none;
+	padding: .03125rem .3125rem;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--muted) 8%, transparent);
+	color: var(--faint);
+	font-size: .5625rem;
+	font-weight: 500;
+	letter-spacing: .03em;
+}
+
 /* One pill, three states: counts when idle, a spinner while loading, red on failure. */
 #status {
 	display: inline-flex;

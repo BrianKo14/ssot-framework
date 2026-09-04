@@ -1,9 +1,12 @@
-import type { Capability, ColumnMeta, SystemMeta, TableMeta } from '../shared/api.js';
+import type { Capability, ColumnMeta, ReferenceMeta, SystemMeta, TableMeta } from '../shared/api.js';
 import { actionMenu, type Action, type ActionMenu } from './actions.js';
 import { api, ApiError, sending } from './api.js';
 import { authenticated, sessionEnded } from './auth.js';
 import { byId, classed, el } from './dom.js';
 import { filterBar, type FilterBar } from './filters.js';
+import { keyThrough, referencesOf, targetOf, valuesOf } from './fk.js';
+import { picker, type Picker } from './picker.js';
+import { listPath } from './query.js';
 import { router, same, type Router, type View } from './route.js';
 
 type Row = Record<string, unknown>;
@@ -39,10 +42,30 @@ const say = (message: string, state: 'ready' | 'busy' | 'error' = 'ready') => {
 const blank = () => { grid.hidden = true; emptyNote.hidden = true; editing?.cancel(); closePeek(); };
 
 
+// --- Foreign keys ---
+
+/** A column's fk plus the table it points at. */
+interface Fk {
+	ref: ReferenceMeta;
+	target: TableMeta;
+}
+
+/** Each table's fks, indexed by the columns that carry them; built once from `_meta`. */
+let fks = new Map<TableMeta, ReadonlyMap<string, ReferenceMeta>>();
+
+/** The fk a column carries, if any (or none this caller may read). */
+const fkOf = (t: TableMeta, c: ColumnMeta): Fk | undefined => {
+	const ref = fks.get(t)?.get(c.name);
+	const target = ref && targetOf(tables, ref);
+
+	return ref && target ? { ref, target } : undefined;
+};
+
+
 // --- API ---
 
 /** A row's pk values, in declaration order. */
-const key = (t: TableMeta, row: Row) => t.pk.map(k => String(row[k]));
+const key = (t: TableMeta, row: Row) => valuesOf(t.pk, row);
 
 /** The `/:pk0[/:pk1…]` route `crudRouter` mounts. */
 const rowPath = (t: TableMeta, row: Row) =>
@@ -53,20 +76,39 @@ const rowPath = (t: TableMeta, row: Row) =>
 
 /** A column's tooltip and markers, shared by the grid header and the peek's label. */
 const named = <N extends HTMLElement>(node: N, t: TableMeta, c: ColumnMeta): N => {
-	node.title = `${c.type} — ${c.expected}`;
+	const fk = fkOf(t, c);
+
+	node.title = `${c.type} — ${c.expected}${fk ? ` → ${fk.target.entity}` : ''}`;
 	node.classList.toggle('pk', t.pk.includes(c.name));
 	node.classList.toggle('required', !c.nullable);
+	node.classList.toggle('fk', fk !== undefined);
 
 	return node;
 };
 
-/** A value, in a grid cell or a peek field. */
-const shown = <K extends 'td' | 'dd'>(tag: K, value: unknown) => {
-	const node = el(tag, value === null ? 'null' : String(value));
+/** A value, in a grid cell or a peek field.
+    @param link the row it addresses, when it addresses one — see `fkLink`. */
+const shown = <K extends 'td' | 'dd'>(tag: K, value: unknown, link?: HTMLAnchorElement) => {
+	const node = el(tag, link ?? (value === null ? 'null' : String(value)));
 
 	node.classList.toggle('null', value === null);
 
 	return node;
+};
+
+/** An fk value drawn as a real link to the row it addresses — Back and new-tab both work.
+    Nothing is fetched; it uses the value already on screen. */
+const fkLink = (fk: Fk, row: Row, value: unknown): HTMLAnchorElement | undefined => {
+	const addressed = keyThrough(fk.ref, fk.target, row);
+
+	if (!addressed) return undefined;	// an fk onto a unique key, or a null: no row is named
+
+	const a = classed('a', 'ref', String(value));
+
+	a.href = route.href({ screen: fk.target.entity, key: addressed, conditions: [] });
+	a.title = `Ver ${fk.target.entity}`;
+
+	return a;
 };
 
 const header = (t: TableMeta) => (c: ColumnMeta) => named(el('th', c.name, el('small', c.type)), t, c);
@@ -75,7 +117,8 @@ const header = (t: TableMeta) => (c: ColumnMeta) => named(el('th', c.name, el('s
 const writable = (t: TableMeta, c: ColumnMeta) => !t.pk.includes(c.name) && t.capabilities.includes('update');
 
 const cell = (t: TableMeta, row: Row) => (c: ColumnMeta) => {
-	const td = shown('td', row[c.name]);
+	const fk = fkOf(t, c);
+	const td = shown('td', row[c.name], fk && fkLink(fk, row, row[c.name]));
 
 	if (!writable(t, c)) return td;
 
@@ -101,10 +144,37 @@ const note = (input: HTMLInputElement, message?: string) => {
 	input.after(said);
 };
 
-/** A field's editor in the side panel. */
-const peekInput = (c: ColumnMeta, row: Row): HTMLInputElement => {
+/** The lists the panel's fk fields are offering; dropped when those fields are rebuilt. */
+const pickers: Picker[] = [];
+
+const dropPickers = () => pickers.splice(0).forEach(one => one.destroy());
+
+/** Marks a box as changed, the one way, wherever the change came from. */
+const touched = (input: HTMLInputElement) => {
+	note(input);					// clear any refusal — it was about the old value
+	input.classList.toggle('dirty', input.value !== input.dataset.original);
+	syncPeekActions();
+};
+
+/** What picking from an fk's list writes: every column of that fk, since it's one value
+    across several columns. `savePeek` carries them all in the one PATCH it already sends. */
+const pickInto = (values: Row) => {
+	for (const [name, value] of Object.entries(values)) {
+		const box = peekFields.querySelector<HTMLInputElement>(`input[name="${CSS.escape(name)}"]`);
+
+		if (!box) continue;			// a column of the fk this panel does not write
+
+		box.value = value === null ? '' : String(value);
+		touched(box);
+	}
+};
+
+/** A field's editor in the side panel.
+    @param into the field's own box, which the fk list (if any) hangs inside. */
+const peekInput = (c: ColumnMeta, p: Peeked, into: HTMLElement): HTMLInputElement => {
 	const input = el('input');
-	const before = row[c.name] === null ? '' : String(row[c.name]);
+	const before = p.row[c.name] === null ? '' : String(p.row[c.name]);
+	const fk = fkOf(p.t, c);
 
 	input.type = 'text';
 	input.name = c.name;
@@ -112,18 +182,31 @@ const peekInput = (c: ColumnMeta, row: Row): HTMLInputElement => {
 	input.dataset.original = before;
 	input.placeholder = c.expected;
 	input.title = `${c.name}: ${c.type} — ${c.expected}`;
-	input.addEventListener('input', () => {
-		note(input);				// clear any refusal — it was about the old value
-		input.classList.toggle('dirty', input.value !== input.dataset.original);
-		syncPeekActions();
-	});
+
+	const list = fk && picker(input, into, fk.ref, fk.target, pickInto);
+
+	if (list) {
+		pickers.push(list);
+		input.addEventListener('keydown', e => { list.handled(e); });
+	}
+
+	input.addEventListener('input', () => { touched(input); list?.refresh(); });
 
 	return input;
 };
 
-const field = (p: Peeked) => (c: ColumnMeta) =>
-	[named(el('dt', c.name), p.t, c),
-		p.writable(c) ? el('dd', peekInput(c, p.row)) : shown('dd', p.row[c.name])];
+const field = (p: Peeked) => (c: ColumnMeta) => {
+	const label = named(el('dt', c.name), p.t, c);
+	const fk = fkOf(p.t, c);
+
+	if (!p.writable(c)) return [label, shown('dd', p.row[c.name], fk && fkLink(fk, p.row, p.row[c.name]))];
+
+	const box = el('dd');			// built first: it is what the fk's list hangs inside
+
+	box.append(peekInput(c, p, box));
+
+	return [label, box];
+};
 
 /** The grid's sticky leading column. */
 const lead = (tag: 'th' | 'td', ...children: Node[]) => {
@@ -145,8 +228,8 @@ const opener = (t: TableMeta, row: Row) => {
 	return lead('td', button);
 };
 
-/** The one place a row's cells are written. The lead cell is kept, not rebuilt — a fresh one
-    would drop the peek's reference to the button that marks this row open. */
+/** The one place a row's cells are written. Keeps the lead cell rather than rebuilding it,
+    so the peek's reference to its button (which marks the row open) survives. */
 const fill = (tr: HTMLTableRowElement, t: TableMeta, row: Row) => {
 	tr.replaceChildren(tr.querySelector('.lead') ?? opener(t, row), ...t.columns.map(cell(t, row)));
 
@@ -206,6 +289,7 @@ const closePeek = (restore = false) => {
 
 	opened = null;
 	peek.hidden = true;
+	dropPickers();
 
 	if (restore && was) route.mark(here());
 };
@@ -224,6 +308,7 @@ const fillPeek = () => {
 
 	peekEntity.textContent = t.entity;
 	peekTitle.textContent = opened.title;
+	dropPickers();					// the ones the fields about to be replaced were offering
 	peekFields.replaceChildren(...t.columns.flatMap(field(opened)));
 	peekCancel.hidden = peekSave.hidden = !writes;
 	peekDelete.hidden = !removes;
@@ -232,8 +317,8 @@ const fillPeek = () => {
 	syncPeekActions();
 };
 
-/** Updates the shown row after the grid redraws it — unless the panel has unsaved edits, or
-    isn't showing this record at all (a draft never matches: it has no key). */
+/** Updates the shown row after a grid redraw, unless there are unsaved edits or this isn't
+    the record showing (a draft never matches — it has no key). */
 const refreshPeek = (row: Row) => {
 	if (!opened?.key.length || !same(opened.key, key(opened.t, row))) return;
 
@@ -289,8 +374,8 @@ async function savePeek(): Promise<void> {
 
 		dirty.forEach(input => { input.disabled = false; });
 
-		// every field the refusal names, not just the ones sent — a required field left empty
-		// is never sent, so its own "is required" can only be shown by checking all of them
+		// check every field, not just the sent ones — a required field left empty is never
+		// sent, so its "is required" can only show up this way
 		for (const input of peekFields.querySelectorAll<HTMLInputElement>('input'))
 			note(input, failed?.[input.name]);
 
@@ -367,8 +452,8 @@ const record = (t: TableMeta, row: Row, button: HTMLButtonElement): Peeked => {
 	};
 };
 
-/** A new row being inserted. Every column is writable — the pk included, since an insert sets
-    it — and the whole thing goes in one POST to the entity's collection. */
+/** A new row being inserted. Every column is writable, pk included, and it all goes in one
+    POST to the entity's collection. */
 const draft = (t: TableMeta, from: HTMLElement): Peeked => ({
 	t,
 	row: Object.fromEntries(t.columns.map(c => [c.name, null])),	// an all-null row
@@ -398,8 +483,8 @@ const insertRow: Action = {
 /** The cell being edited — one at a time, so opening another can call it off. */
 let editing: { td: HTMLTableCellElement; cancel: () => void } | null = null;
 
-/** A cell opens into one text box, for every type: the column's own handler reads it back, so
-    the screen never needs a per-type widget. An empty box is `null`. */
+/** A cell opens into one text box for every type — no per-type widget needed. Empty is `null`;
+    an fk column gets the same box plus a list beside it, see `picker.ts`. */
 function edit(t: TableMeta, row: Row, c: ColumnMeta, td: HTMLTableCellElement): void {
 	if (editing?.td === td) return;			// a double-click *inside* the open editor selects a word
 
@@ -408,38 +493,46 @@ function edit(t: TableMeta, row: Row, c: ColumnMeta, td: HTMLTableCellElement): 
 	const tr = td.closest('tr');
 	const before = row[c.name] === null ? '' : String(row[c.name]);
 	const input = el('input');
+	const fk = fkOf(t, c);
 
 	input.type = 'text';
 	input.value = before;
 	input.placeholder = c.expected;
 	input.title = `${c.name}: ${c.type} — ${c.expected}`;
 
+	let list: Picker | undefined;			// built below, once the box is in the cell
 	let settled = false;
 
 	/** Puts the cell back the way the row says it is. */
 	const restore = () => {
 		settled = true;
 		editing = null;
+		list?.destroy();
 
 		if (tr?.isConnected) fill(tr, t, row);
 	};
 
-	const commit = async () => {
+	/** @param written what to send: the single typed column by default, or every column of a
+	    picked fk instead — one value across several columns, taken all at once. */
+	const commit = async (written?: Row) => {
 		if (settled || !td.isConnected) return;	// Enter blurs the input straight after; so does leaving the screen
 
-		if (input.value === before) { restore(); return; }
+		if (written === undefined && input.value === before) { restore(); return; }
+
+		const body = written ?? { [c.name]: input.value.trim() === '' ? null : input.value };
 
 		settled = true;
 		input.disabled = true;
+		list?.close();
 		td.classList.remove('bad');
 		say('Guardando…', 'busy');
 
 		try {
-			const saved = await api<Row>(rowPath(t, row),
-				sending('PATCH', { [c.name]: input.value.trim() === '' ? null : input.value }));
+			const saved = await api<Row>(rowPath(t, row), sending('PATCH', body));
 
 			Object.assign(row, saved);		// keep what the server returned, not the typed text
 			editing = null;
+			list?.destroy();
 
 			if (tr?.isConnected) fill(tr, t, row);
 
@@ -457,13 +550,20 @@ function edit(t: TableMeta, row: Row, c: ColumnMeta, td: HTMLTableCellElement): 
 	};
 
 	input.addEventListener('keydown', e => {
+		if (list?.handled(e)) return;					// the list answers its own keys first
+
 		if (e.key === 'Enter') void commit();
 		else if (e.key === 'Escape') { e.stopPropagation(); restore(); }	// the peek's Escape must not fire too
 	});
+	input.addEventListener('input', () => list?.refresh());
 	input.addEventListener('blur', () => void commit());
 
 	td.classList.add('editing');
 	td.replaceChildren(input);
+
+	// after the cell holds the box, so the list is not swept out with what the cell held before
+	if (fk) list = picker(input, td, fk.ref, fk.target, values => void commit(values));
+
 	input.focus();
 	input.select();
 
@@ -501,9 +601,7 @@ async function load(t: TableMeta): Promise<Row[]> {
 	blank();
 	say('Cargando…', 'busy');
 
-	const filter = filters.query();
-	const query = filter === undefined ? '' : `?filter=${encodeURIComponent(filter)}`;
-	const data = await api<Row[]>(`/api/${encodeURIComponent(t.entity)}${query}`);
+	const data = await api<Row[]>(listPath(t.entity, filters.query()));
 
 	renderGrid(t, data);
 	say(summary(t));
@@ -577,6 +675,7 @@ async function main(): Promise<void> {
 	}
 
 	tables = meta.tables;
+	fks = new Map(tables.map(t => [t, referencesOf(t)]));
 
 	if (!tables.length) { say('No hay entidades disponibles para este usuario.'); return; }
 

@@ -8,6 +8,7 @@ export interface ColumnInfo {
 	name: string;
 	typeName: string;
 	nullable: boolean;
+	isName: boolean;
 	type: TypeHandler<any>;
 }
 

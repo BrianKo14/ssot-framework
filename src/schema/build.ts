@@ -56,7 +56,7 @@ function tableInfo(
 
 		if (!type) throw new Error(`entity "${entityName}", field "${name}": unknown type "${typeName}"`);
 
-		return { name, typeName, nullable: field.nullable, type };
+		return { name, typeName, nullable: field.nullable, isName: field.isName, type };
 	});
 
 	const byName: Columns = new Map(columns.map(c => [c.name, c]));

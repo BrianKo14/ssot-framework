@@ -447,10 +447,11 @@ thead th {
 }
 th small { margin-left: .5rem; color: var(--faint); font-size: .6875rem; }
 
-/* Column markers, on the grid's header cell and on the peek's field label alike. */
-.pk::after {
-	content: "PK";
-	margin-left: .375rem;
+/* Column markers, on the grid's header cell and on the peek's field label alike. A column can
+   be several of these at once — a detail's fk *is* its pk — so each marker gets a box of its
+   own: PK trails the name, FK leads it, and neither can crowd the other out. */
+.pk::after,
+.fk::before {
 	padding: .0625rem .25rem;
 	border-radius: 3px;
 	background: var(--brand-soft);
@@ -460,7 +461,24 @@ th small { margin-left: .5rem; color: var(--faint); font-size: .6875rem; }
 	letter-spacing: .04em;
 	vertical-align: 1px;
 }
+.pk::after { content: "PK"; margin-left: .375rem; }
+.fk::before {					/* neutral: the accent belongs to the key that addresses the row */
+	content: "FK";
+	margin-right: .375rem;
+	background: var(--hover);
+	color: var(--muted);
+}
 .required:not(.pk)::after { content: "*"; margin-left: .25rem; color: var(--bad); }	/* a pk column is required by definition */
+
+/* An fk's value is the address of another row, so it is drawn as the link it is — and quietly,
+   so a column of them still reads as data and not as a row of buttons. */
+a.ref {
+	color: inherit;
+	text-decoration: underline;
+	text-decoration-color: var(--faint);
+	text-underline-offset: 2px;
+}
+a.ref:hover { color: var(--brand-ink); text-decoration-color: currentColor; }
 
 /* The grid's own leading column: the handle that opens a row, pinned so it survives a
    sideways scroll. It holds no data, so it stays empty until the row is pointed at. */

@@ -2,7 +2,17 @@ export interface ColumnMeta {
 	name: string;
 	type: string;		// the domain type's name, e.g. "nombre" (not the SQL type)
 	nullable: boolean;
+	isName: boolean;	// what a row of this table is called; what an fk list shows
 	expected: string;	// e.g. "a date (YYYY-MM-DD)"
+}
+
+/** One foreign key, columns on both sides.
+ * Only fks whose target the caller may read are published. */
+export interface ReferenceMeta {
+	name: string;			// the fk's name
+	to: string;			// the target's entity identity, e.g. "ventas.reserva"
+	columns: string[];		// this table's columns, in the order they map
+	targetColumns: string[];	// the target's columns, in the same order
 }
 
 import type { Capability } from 'system-definition';
@@ -12,6 +22,7 @@ export interface TableMeta {
 	entity: string;		// the entity's identity, qualified when it is not in the default schema
 	pk: string[];		// column names, in declaration order
 	columns: ColumnMeta[];	// in declaration order; the order screens present them in
+	references: ReferenceMeta[];	// the fks this table declares, minus the ones this caller may not read
 	/** What *this* caller may do here. A table it cannot read is not sent at all. */
 	capabilities: Capability[];
 }

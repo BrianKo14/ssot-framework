@@ -1,8 +1,9 @@
 // The filter bar.
 
-import type { ColumnMeta, FilterCondition, OperatorMeta, TableMeta } from '../shared/api.js';
+import type { ColumnMeta, OperatorMeta, TableMeta } from '../shared/api.js';
 import { classed, el } from './dom.js';
 import { menu, type Option } from './menu.js';
+import { filterQuery } from './query.js';
 import { type Condition, operand } from './route.js';
 
 /** The condition being written: a column, then a comparison, then a value. */
@@ -230,17 +231,9 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 
 	// --- What the screen asks of it ---
 
-	const encode = (all: Condition[]) => {
-		if (!all.length) return undefined;
-
-		const filter = new Map<string, FilterCondition[]>();
-
-		for (const a of all)
-			filter.set(a.column.name,
-				[...filter.get(a.column.name) ?? [], { op: a.operator.name, value: a.value }]);
-
-		return JSON.stringify(Object.fromEntries(filter));
-	};
+	// what a condition on screen is on the wire; the format itself lives in `query.ts`
+	const encode = (all: Condition[]) =>
+		filterQuery(all.map(a => ({ column: a.column.name, op: a.operator.name, value: a.value })));
 
 	const query = () => encode(applied);
 

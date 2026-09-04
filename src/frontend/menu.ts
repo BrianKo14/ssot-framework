@@ -19,6 +19,9 @@ export interface Menu {
 	step(by: number): void;
 	/** The highlighted line, if the dropdown is open. */
 	current(): Option | undefined;
+	/** Removes the dropdown and its listeners — call for a per-edit dropdown so a long session
+	    doesn't accumulate them; a screen-long one never needs it. */
+	destroy(): void;
 }
 
 let ids = 0;	// unique per instance, so a controller's aria-controls never collides
@@ -26,8 +29,10 @@ let ids = 0;	// unique per instance, so a controller's aria-controls never colli
 /**
  * @param controller the input or button it hangs from; its `aria-expanded` follows the dropdown
  * @param within the box both sit in — a press outside it closes the dropdown
+ * @param anchored position it against the controller by hand, for use inside a scrolling box
+ * (a CSS-positioned dropdown would get clipped there)
  */
-export function menu(controller: HTMLElement, within: HTMLElement): Menu {
+export function menu(controller: HTMLElement, within: HTMLElement, anchored = false): Menu {
 	const element = classed('ul', 'menu');
 
 	let showing: Option[] = [];
@@ -41,6 +46,15 @@ export function menu(controller: HTMLElement, within: HTMLElement): Menu {
 	controller.setAttribute('aria-expanded', 'false');
 
 	const isOpen = () => !element.hidden;
+
+	/** Against the controller's box, in viewport coordinates, so no ancestor's overflow cuts it. */
+	const place = () => {
+		const box = controller.getBoundingClientRect();
+
+		element.style.position = 'fixed';
+		element.style.left = `${box.left}px`;
+		element.style.top = `${box.bottom + 2}px`;
+	};
 
 	const mark = () => lines.forEach((li, i) => li.setAttribute('aria-selected', String(i === active)));
 
@@ -66,6 +80,9 @@ export function menu(controller: HTMLElement, within: HTMLElement): Menu {
 
 		element.hidden = false;
 		controller.setAttribute('aria-expanded', 'true');
+
+		if (anchored) place();
+
 		mark();
 	};
 
@@ -86,11 +103,29 @@ export function menu(controller: HTMLElement, within: HTMLElement): Menu {
 		lines[active].scrollIntoView({ block: 'nearest' });
 	};
 
-	// Capture phase: picking a line rebuilds the list before this listener sees the click, so a
-	// bubbling check ("is the target still inside?") would wrongly answer no and close it again.
+	// Abortable, so a dropdown built per edit can take its listeners with it when it goes.
+	const listeners = new AbortController();
+	const { signal } = listeners;
+
+	// Capture phase: a pick rebuilds the list before this sees the click, so a bubble-phase
+	// "still inside?" check would wrongly say no and close it again.
 	addEventListener('mousedown', e => {
 		if (e.target instanceof Node && !within.contains(e.target)) close();
-	}, true);
+	}, { capture: true, signal });
 
-	return { element, isOpen, open, close, step, current: () => (isOpen() ? showing[active] : undefined) };
+	if (anchored) {
+		// placed once on opening, and kept there: what it hangs from moves with the box it scrolls in
+		addEventListener('scroll', () => { if (isOpen()) place(); }, { capture: true, signal });
+		addEventListener('resize', () => { if (isOpen()) place(); }, { signal });
+	}
+
+	const destroy = () => {
+		listeners.abort();
+		element.remove();
+	};
+
+	return {
+		element, isOpen, open, close, step, destroy,
+		current: () => (isOpen() ? showing[active] : undefined),
+	};
 }

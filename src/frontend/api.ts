@@ -17,17 +17,24 @@ const fieldErrors = (raw: unknown): FieldErrors | undefined => {
 	return named.length ? (Object.fromEntries(named) as FieldErrors) : undefined;
 };
 
-export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+/** The request itself, handing back the response rather than reading it — for what does not
+ * come back as JSON (an export's file). A refusal is JSON whatever was asked for, so it is
+ * read and thrown here, and every caller reports failure the one way. */
+export async function fetched(path: string, init?: RequestInit): Promise<Response> {
 	const res = await fetch(path, init);
 
-	const body: unknown = await res.json().catch(() => null);
-	const refusal = body as { error?: unknown; fields?: unknown } | null;
+	if (res.ok) return res;
+
+	const refusal = await res.json().catch(() => null) as { error?: unknown; fields?: unknown } | null;
 	const said = refusal?.error;
 
-	if (!res.ok) throw new ApiError(res.status,
+	throw new ApiError(res.status,
 		typeof said === 'string' ? said : res.statusText, fieldErrors(refusal?.fields));
+}
 
-	return body as T;
+export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+	// tolerant: a 204 (DELETE) has no body to read
+	return await (await fetched(path, init)).json().catch(() => null) as T;
 }
 
 // The session cookie is sent automatically, so we don't need to include it in the headers.

@@ -20,6 +20,14 @@ export function filterQuery(asked: Asked[]): string | undefined {
 	return JSON.stringify(Object.fromEntries(filter));
 }
 
-/** Where a table's rows are read from. The entity is the only thing the path names. */
-export const listPath = (entity: string, filter?: string): string =>
-	`/api/${encodeURIComponent(entity)}${filter === undefined ? '' : `?filter=${encodeURIComponent(filter)}`}`;
+/** Where a table's rows are read from. The entity is the only thing the path names.
+ * @param format a `FormatMeta.name` to be handed the list as a file instead; exporting is
+ * reading, so it is this same address with one more thing asked of it. */
+export const listPath = (entity: string, filter?: string, format?: string): string => {
+	const asked = [
+		...(filter === undefined ? [] : [`filter=${encodeURIComponent(filter)}`]),
+		...(format === undefined ? [] : [`format=${encodeURIComponent(format)}`]),
+	];
+
+	return `/api/${encodeURIComponent(entity)}${asked.length ? `?${asked.join('&')}` : ''}`;
+};

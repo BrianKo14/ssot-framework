@@ -4,7 +4,7 @@ import { generateTab } from 'tab-plus';
 import { type Format, headings, rowFields, type Sheet, textStream } from './format.js';
 
 export const tab: Format = {
-	label: 'Texto (tabulado)',
+	label: 'Texto',
 	contentType: 'text/plain; charset=utf-8',
 	extension: 'txt',
 	render: (sheet: Sheet) => textStream(generateTab({

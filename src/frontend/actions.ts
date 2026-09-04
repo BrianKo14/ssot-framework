@@ -19,16 +19,33 @@ export interface ActionMenu {
 	reset(t: TableMeta): void;
 }
 
+/** How the button is drawn. What it *does* is the same either way — only the shape differs,
+    so the stylesheet is told which one and nothing here knows what a mark looks like. */
+export interface Look {
+	/** Added beside `actions` on the box, for the stylesheet to hang the shape and mark on. */
+	className?: string;
+	/** Draw the mark alone: the label is then the button's name and its tooltip, not its text. */
+	iconOnly?: boolean;
+}
+
 /**
  * @param label what the button is called
  * @param actions everything the toolbar may offer, in order
+ * @param look how it is drawn; written on the button by default
  */
-export function actionMenu(label: string, actions: Action[]): ActionMenu {
-	const button = el('button', label);
+export function actionMenu(label: string, actions: Action[], look: Look = {}): ActionMenu {
+	const button = el('button', ...(look.iconOnly ? [] : [label]));
 	const element = classed('div', 'actions', button);
 	const list = menu(button, element);
 
 	let table: TableMeta | null = null;
+
+	if (look.className) element.classList.add(look.className);
+
+	if (look.iconOnly) {					// nothing is written on it, so it says its own name
+		button.title = label;
+		button.setAttribute('aria-label', label);
+	}
 
 	element.append(list.element);
 	element.hidden = true;					// until a screen says what it allows

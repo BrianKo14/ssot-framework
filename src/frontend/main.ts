@@ -1,8 +1,9 @@
-import type { Capability, ColumnMeta, ReferenceMeta, SystemMeta, TableMeta } from '../shared/api.js';
+import type { Capability, ColumnMeta, FormatMeta, ReferenceMeta, SystemMeta, TableMeta } from '../shared/api.js';
 import { actionMenu, type Action, type ActionMenu } from './actions.js';
 import { api, ApiError, sending } from './api.js';
 import { authenticated, sessionEnded } from './auth.js';
 import { byId, classed, el } from './dom.js';
+import { download } from './export.js';
 import { filterBar, type FilterBar } from './filters.js';
 import { keyThrough, referencesOf, targetOf, valuesOf } from './fk.js';
 import { picker, type Picker } from './picker.js';
@@ -16,6 +17,7 @@ type Row = Record<string, unknown>;
 
 const 	nav = byId('entities'),
 	toolbar = byId('toolbar'),
+	headerEnd = byId('header-end'),
 	heading = byId('title'),
 	statusLine = byId('status'),
 	grid = byId('grid'),
@@ -501,6 +503,17 @@ const insertRow: Action = {
 	run: t => show(draft(t, inserts.button)),
 };
 
+/** Taking the list away as a file — one action per format `_meta` publishes, so a format the
+    backend gains is a line here without a word of it being written in the frontend.
+    It is the list on screen that leaves: same filter, and `read` because exporting is reading.
+    Nothing changed on screen, so a success says nothing either — only a failure does. */
+const saveAs = (f: FormatMeta): Action => ({
+	text: f.label,
+	needs: 'read',
+	run: t => void download(listPath(t.entity, filters.query(), f.name), `${t.entity}.${f.extension}`)
+		.catch(failSoftly),
+});
+
 
 // --- Editing ---
 
@@ -614,6 +627,7 @@ let screen: TableMeta | null = null;
 /** Built in `main`, once `_meta` has answered. */
 let filters!: FilterBar;
 let inserts!: ActionMenu;
+let exports!: ActionMenu;
 let route!: Router;
 
 /** The address for what is on screen now, assembled from the screen and the bar themselves. */
@@ -660,6 +674,7 @@ async function draw(): Promise<void> {
 	screen = t;
 	filters.reset(t, view.conditions);
 	inserts.reset(t);
+	exports.reset(t);
 
 	const data = await load(t);
 
@@ -677,6 +692,14 @@ const fail = (err: Error) => {
 	if (sessionEnded(err)) { location.reload(); return; }
 
 	blank();
+	say(err.message, 'error');
+};
+
+/** For what failed beside the screen rather than while drawing it — the grid still holds what
+    it held, so only the status line changes. */
+const failSoftly = (err: Error) => {
+	if (sessionEnded(err)) { location.reload(); return; }
+
 	say(err.message, 'error');
 };
 
@@ -705,10 +728,12 @@ async function main(): Promise<void> {
 
 	filters = filterBar(meta.operators, refilter);
 	inserts = actionMenu('Insertar', [insertRow]);
+	exports = actionMenu('Exportar', meta.formats.map(saveAs), { className: 'exports', iconOnly: true });
 	route = router(meta);
 
 	nav.replaceChildren(...tables.map(link));
 	toolbar.append(filters.element, inserts.element);
+	headerEnd.append(exports.element);
 	peekClose.addEventListener('click', dismissPeek);
 	peekForm.addEventListener('submit', e => { e.preventDefault(); void savePeek(); });
 	peekCancel.addEventListener('click', cancelPeek);

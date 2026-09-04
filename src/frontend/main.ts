@@ -76,13 +76,25 @@ const rowPath = (t: TableMeta, row: Row) =>
 
 // --- Rendering ---
 
-/** A column's tooltip and markers, shared by the grid header and the peek's label. */
-const named = <N extends HTMLElement>(node: N, t: TableMeta, c: ColumnMeta): N => {
+/** A constant the form can show. A `{fn}` default is one only the database can produce, and a
+    browser must not guess it — that would be a second clock — so it shows as empty. */
+const constantDefault = (c: ColumnMeta) =>
+	c.defaultValue !== null && 'value' in c.defaultValue ? c.defaultValue.value : null;
+
+/** `crud.ts`'s `requiredOnInsert`, decided here the same way: a column the database can fill is
+    one an insert may leave empty, even when it is not nullable. An update is not the same
+    question — blanking such a column is still refused — so only a draft asks this one. */
+const requiredOnInsert = (c: ColumnMeta) => !c.nullable && c.defaultValue === null;
+
+/** A column's tooltip and markers, shared by the grid header and the peek's label.
+    @param required whether the field being labelled will be refused empty; the grid header
+    speaks about the column itself, a panel about what it is doing to it. */
+const named = <N extends HTMLElement>(node: N, t: TableMeta, c: ColumnMeta, required: boolean): N => {
 	const fk = fkOf(t, c);
 
 	node.title = `${c.type} — ${c.expected}${fk ? ` → ${fk.target.entity}` : ''}`;
 	node.classList.toggle('pk', t.pk.includes(c.name));
-	node.classList.toggle('required', !c.nullable);
+	node.classList.toggle('required', required);
 	node.classList.toggle('fk', fk !== undefined);
 
 	return node;
@@ -113,7 +125,7 @@ const fkLink = (fk: Fk, row: Row, value: unknown): HTMLAnchorElement | undefined
 	return a;
 };
 
-const header = (t: TableMeta) => (c: ColumnMeta) => named(el('th', c.name, el('small', c.type)), t, c);
+const header = (t: TableMeta) => (c: ColumnMeta) => named(el('th', c.name, el('small', c.type)), t, c, !c.nullable);
 
 /** Shared by the grid's cell and the peek's field, so the two can't disagree on what's editable. */
 const writable = (t: TableMeta, c: ColumnMeta) => !t.pk.includes(c.name) && t.capabilities.includes('update');
@@ -198,7 +210,7 @@ const peekInput = (c: ColumnMeta, p: Peeked, into: HTMLElement): HTMLInputElemen
 };
 
 const field = (p: Peeked) => (c: ColumnMeta) => {
-	const label = named(el('dt', c.name), p.t, c);
+	const label = named(el('dt', c.name), p.t, c, p.required(c));
 	const fk = fkOf(p.t, c);
 
 	if (!p.writable(c)) return [label, shown('dd', p.row[c.name], fk && fkLink(fk, p.row, p.row[c.name]))];
@@ -294,6 +306,8 @@ interface Peeked {
 	title: string;
 	needs: Capability;
 	writable(c: ColumnMeta): boolean;
+	/** Whether this panel will be refused the field empty — see `requiredOnInsert`. */
+	required(c: ColumnMeta): boolean;
 	/** Focus target on open: a record is there to be read, a draft to be written. */
 	landing(): HTMLElement;
 	save(typed: Row): Promise<void>;
@@ -456,6 +470,7 @@ const record = (t: TableMeta, row: Row, button: HTMLButtonElement): Peeked => {
 		title: id.join(' · ') || 'Registro',
 		needs: 'update',
 		writable: c => writable(t, c),
+		required: c => !c.nullable,		// a default fills what an insert omits, not what an update blanks
 		landing: () => peekClose,
 		save: async typed => {
 			const saved = await api<Row>(rowPath(t, row), sending('PATCH', typed));
@@ -482,12 +497,16 @@ const record = (t: TableMeta, row: Row, button: HTMLButtonElement): Peeked => {
     POST to the entity's collection. */
 const draft = (t: TableMeta, from: HTMLElement): Peeked => ({
 	t,
-	row: Object.fromEntries(t.columns.map(c => [c.name, null])),	// an all-null row
+	// what the row will be if nothing is typed: the constants the definition declares, null
+	// elsewhere. Shown but not dirty, so an untouched one is never sent and the database is
+	// the one that applies it — the value on screen and the value stored have one source.
+	row: Object.fromEntries(t.columns.map(c => [c.name, constantDefault(c)])),
 	key: [],
 	from,
 	title: 'Nuevo registro',
 	needs: 'create',
 	writable: () => true,
+	required: requiredOnInsert,
 	landing: () => peekFields.querySelector('input') ?? peekClose,
 	save: async typed => {
 		const created = await api<Row>(`/api/${encodeURIComponent(t.entity)}`, sending('POST', typed));

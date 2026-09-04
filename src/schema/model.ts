@@ -1,5 +1,6 @@
 // Model for the schema generator: what a table, column, reference, etc., is
 
+import type { DefaultDef } from 'system-definition';
 import type { Capability } from '../shared/api.js';
 import type { TypeHandler } from '../types/handler.js';
 
@@ -10,6 +11,7 @@ export interface ColumnInfo {
 	nullable: boolean;
 	isName: boolean;
 	type: TypeHandler<any>;
+	defaultValue: DefaultDef<unknown> | null;
 	defaultSql: string | null;
 }
 

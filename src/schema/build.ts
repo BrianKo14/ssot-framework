@@ -60,7 +60,8 @@ function tableInfo(
 		const defaultSql = defaultSqlOf(field.defaultValue, type, field.nullable,
 			`entity "${entityName}", field "${name}"`);
 
-		return { name, typeName, nullable: field.nullable, isName: field.isName, type, defaultSql };
+		return { name, typeName, nullable: field.nullable, isName: field.isName, type,
+			defaultValue: field.defaultValue, defaultSql };
 	});
 
 	const byName: Columns = new Map(columns.map(c => [c.name, c]));

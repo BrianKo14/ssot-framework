@@ -88,7 +88,7 @@ export const col = (t: TableInfo, name: string): ColumnInfo => {
 /** What a password must look like.
  * The plaintext password is not stored, but it still has a type. */
 export const password: ColumnInfo =
-	{ name: 'password', typeName: 'password', nullable: false, isName: false, type: passwordType(), defaultSql: null };
+	{ name: 'password', typeName: 'password', nullable: false, isName: false, type: passwordType(), defaultValue: null, defaultSql: null };
 
 /** What a login request must carry. */
 export const loginFields: ColumnInfo[] = [col(userTable, 'username'), password];

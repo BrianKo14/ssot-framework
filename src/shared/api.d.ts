@@ -1,9 +1,12 @@
+import type { DefaultDef } from 'system-definition';
+
 export interface ColumnMeta {
 	name: string;
 	type: string;		// the domain type's name, e.g. "nombre" (not the SQL type)
 	nullable: boolean;
 	isName: boolean;	// what a row of this table is called; what an fk list shows
 	expected: string;	// e.g. "a date (YYYY-MM-DD)"
+	defaultValue: DefaultDef<unknown> | null;
 }
 
 /** One foreign key, columns on both sides.

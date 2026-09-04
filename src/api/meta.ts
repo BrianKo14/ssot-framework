@@ -11,7 +11,10 @@ import type { ColumnInfo, ReferenceInfo, TableInfo } from '../schema/model.js';
 export const META = '_meta';
 
 const columnMeta = (c: ColumnInfo): ColumnMeta =>
-	({ name: c.name, type: c.typeName, nullable: c.nullable, isName: c.isName, expected: c.type.expected });
+	({
+		name: c.name, type: c.typeName, nullable: c.nullable, isName: c.isName,
+		expected: c.type.expected, defaultValue: c.defaultValue,
+	});
 
 /** An fk named on both sides by identity and column name. */
 const referenceMeta = (r: ReferenceInfo): ReferenceMeta => ({

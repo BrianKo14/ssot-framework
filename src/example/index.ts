@@ -1,4 +1,4 @@
-// Serves the example system in `system.ts`.
+// Starts the live server
 
 import { serve } from '../serve.js';
 import { tables } from './system.js';

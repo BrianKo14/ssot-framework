@@ -27,6 +27,30 @@ AUTH_PASSWORD='yourpassword' npm run auth:user -- brian --role admin
 
 The database that comes out is empty.
 
+## Updating the database
+
+`npm run db:update` compares the system definition against the database and writes the SQL for whatever is missing (schemas, domains, tables, columns, keys, indexes). Nothing is dropped or rewritten, so **the data stays**.
+
+```
+npm run db:update              # print what is missing
+npm run db:update -- --apply   # add it to the database
+```
+
+It always connects, since comparing means reading the database. If nothing is missing, it writes no SQL. Applying is one statement, so a failure partway leaves the database untouched. Against an empty database it does what `db:create` does.
+
+Still not built: removing, renaming, retyping. As of now, anything that no longer matches the definition is left as is.
+
+### Adding a column to a table that has rows
+
+A non-nullable column needs a `defaultValue` for the existing rows, a constant or a generator:
+
+```ts
+activo: { type: 'boolean', nullable: false, defaultValue: { value: true } },
+alta:   { type: 'date',    nullable: false, defaultValue: { fn: 'today' } },
+```
+
+Without one, `db:update` stops and names the column instead. Empty tables allow either way.
+
 ## Managing users
 
 `npm run auth:user` creates a user or edits an existing one. The user name is the

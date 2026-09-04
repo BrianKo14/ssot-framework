@@ -6,11 +6,40 @@ import {
 } from './identifier.js';
 
 
+// --- Objects the framework creates ---
+
+export type ObjectKind = 'schema' | 'domain' | 'table' | 'column' | 'constraint' | 'index';
+
+/** Object kind + qualified name. */
+export const objectKey = (kind: ObjectKind, ...parts: string[]): string =>
+	`${kind} ${parts.map(q).join('.')}`;
+
+/** One database object the definition asks for. */
+export interface Target {
+	/** Its identity in the catalogue, e.g. `column "ventas"."reserva"."hora"`. */
+	key: string;
+	/** The SQL statement that creates it. */
+	sql: string;
+	/** Things bundled with it, e.g. a table's columns. */
+	parts?: Target[];
+	/** This is the table.
+	 * It only gets set when adding a required column with no default value that might already have rows.
+	 * `sql` only applies while this table holds no rows. */
+	onlyIfEmpty?: TableInfo;
+}
+
+/** List of SQL commands -> SQL (text) script. */
+export const script = (statements: string[], header: string): string =>
+	header.split('\n').map(line => `-- ${line}\n`).join('') + '\n'
+	+ statements.map(s => `${s};\n`).join('\n');
+
+
 // --- Schemas ---
 
 /** `create schema` for every schema except the default one, which Postgres already provides. */
-const schemaStatements = (schemas: string[]): string[] =>
-	schemas.filter(schema => schema !== DEFAULT_SCHEMA).map(schema => `create schema ${q(schema)}`);
+const schemaTargets = (schemas: string[]): Target[] =>
+	schemas.filter(schema => schema !== DEFAULT_SCHEMA).map(schema =>
+		({ key: objectKey('schema', schema), sql: `create schema ${q(schema)}` }));
 
 
 // --- Domains (custom types) ---
@@ -53,7 +82,7 @@ function storages(tables: TableInfo[]): Map<string, string> {
  * E.g. `nombre` stored as `varchar(100)` but not `text` as `text`. */
 const needsDomain = (typeName: string, sqlType: string): boolean => typeName !== sqlType;
 
-const domainStatements = (byName: Map<string, string>): string[] =>
+const domainTargets = (byName: Map<string, string>): Target[] =>
 	[...byName]
 		.filter(([typeName, sqlType]) => needsDomain(typeName, sqlType))
 		.map(([typeName, sqlType]) => {
@@ -61,11 +90,40 @@ const domainStatements = (byName: Map<string, string>): string[] =>
 				throw new Error(`type "${typeName}" cannot be stored as ${sqlType}: `
 					+ `Postgres already has a type of that name and would use it instead`);
 
-			return `create domain ${domainRef(typeName)} as ${sqlType}`;
+			return {
+				key: objectKey('domain', DEFAULT_SCHEMA, typeName),
+				sql: `create domain ${domainRef(typeName)} as ${sqlType}`,
+			};
 		});
 
 
-// --- Tables ---
+// --- Constraints ---
+
+/** A constraint by name and body. */
+interface Constraint {
+	name: string;		// a name for the constraint
+	body: string;		// e.g. `primary key ("fecha", "id")`
+}
+
+/** How a constraint is written inside a `create table`, and after `alter table … add`. */
+const inline = (c: Constraint): string => `constraint ${q(c.name)} ${c.body}`;
+
+const constraintTarget = (t: TableInfo, c: Constraint): Target => ({
+	key: objectKey('constraint', t.schema, t.table, c.name),
+	sql: `alter table ${tableRef(t)} add ${inline(c)}`,
+});
+
+/** A table's own keys, in the order `create table` writes them: the pk, then the uks. */
+const keyConstraints = (t: TableInfo, taken: Set<string>): Constraint[] => [
+	{ name: generatedName([t.table, 'pk'], taken), body: `primary key (${columnList(t.pk)})` },
+	...Object.entries(t.uks).map(([uk, cols]) => ({
+		name: generatedName([t.table, uk, 'uk'], taken),
+		body: `unique (${columnList(cols)})`,
+	})),
+];
+
+
+// --- Tables and columns ---
 
 const columnType = (c: ColumnInfo): string =>
 	needsDomain(c.typeName, c.type.sqlType) ? domainRef(c.typeName) : storageType(c.type.sqlType);
@@ -75,40 +133,58 @@ const columnDefinition = (c: ColumnInfo): string =>
 	`${q(checkedName(c.name, 'column'))} ${columnType(c)}${c.nullable ? '' : ' not null'}`
 	+ (c.defaultSql === null ? '' : ` default ${c.defaultSql}`);
 
-/** Generates the SQL statement for creating a table. */
-function tableStatement(t: TableInfo, taken: Set<string>): string {
-	const parts = [
-		...t.columns.map(columnDefinition),
-		`constraint ${q(generatedName([t.table, 'pk'], taken))} primary key (${columnList(t.pk)})`,
-		...Object.entries(t.uks).map(([uk, cols]) =>
-			`constraint ${q(generatedName([t.table, uk, 'uk'], taken))} unique (${columnList(cols)})`),
-	];
+function columnTarget(t: TableInfo, c: ColumnInfo): Target {
+	const target: Target = {
+		key: objectKey('column', t.schema, t.table, c.name),
+		sql: `alter table ${tableRef(t)} add column ${columnDefinition(c)}`,
+	};
 
-	return `create table ${tableRef(t)} (\n  ${parts.join(',\n  ')}\n)`;
+	if (!c.nullable && c.defaultSql === null) target.onlyIfEmpty = t;
+
+	return target;
+}
+
+/** The table w/ everything that goes inside. */
+function tableTarget(t: TableInfo, taken: Set<string>): Target {
+	const keys = keyConstraints(t, taken);
+
+	return {
+		key: objectKey('table', t.schema, t.table),
+		sql: `create table ${tableRef(t)} (\n  `
+			+ [...t.columns.map(columnDefinition), ...keys.map(inline)].join(',\n  ') + `\n)`,
+		parts: [...t.columns.map(c => columnTarget(t, c)), ...keys.map(c => constraintTarget(t, c))],
+	};
 }
 
 
 // --- References ---
 
-/** Creates the SQL statement for adding a foreign key constraint to a table. */
-const foreignKeyStatement = (t: TableInfo, taken: Set<string>): string[] =>
-	t.references.map(ref =>
-		`alter table ${tableRef(t)} add constraint ${q(generatedName([t.table, ref.name, 'fk'], taken))}`
-		+ ` foreign key (${columnList(ref.columns)})`
-		// the target's own schema, so a fk across schemas needs no special case
-		+ ` references ${tableRef(ref.to)} (${columnList(ref.targetColumns)})`);
+/** Foreign key constraints from a table. */
+const foreignKeyTargets = (t: TableInfo, taken: Set<string>): Target[] =>
+	t.references.map(ref => constraintTarget(t, {
+		name: generatedName([t.table, ref.name, 'fk'], taken),
+		body: `foreign key (${columnList(ref.columns)})`
+			// the target's own schema, so a fk across schemas needs no special case
+			+ ` references ${tableRef(ref.to)} (${columnList(ref.targetColumns)})`,
+	}));
 
 /** Determines if a list of columns (in order) is the start of a key, in order. */
 const leads = (cols: ColumnInfo[], key: ColumnInfo[]): boolean =>
 	cols.length <= key.length && cols.every((c, i) => key[i] === c);
 
-/** Creates a list of SQL statements for creating indexes on a table's foreign key columns. */
-const indexStatement = (t: TableInfo, taken: Set<string>): string[] =>
+/** Indexes on a table's foreign key columns. */
+const indexTargets = (t: TableInfo, taken: Set<string>): Target[] =>
 	t.references
 		// Skip indexes that are already covered by a primary key or unique constraint
 		.filter(ref => ![t.pk, ...Object.values(t.uks)].some(key => leads(ref.columns, key)))
-		.map(ref => `create index ${q(generatedName([t.table, ref.name, 'ix'], taken))}`
-			+ ` on ${tableRef(t)} (${columnList(ref.columns)})`);
+		.map(ref => {
+			const name = generatedName([t.table, ref.name, 'ix'], taken);
+
+			return {
+				key: objectKey('index', t.schema, name),
+				sql: `create index ${q(name)} on ${tableRef(t)} (${columnList(ref.columns)})`,
+			};
+		});
 
 
 // --- The schema ---
@@ -130,21 +206,23 @@ function takenBySchema(tables: TableInfo[]): Map<string, Set<string>> {
 	return bySchema;
 }
 
-/** The SQL script that creates the schema for all the tables. */
-export function schemaSql(tables: TableInfo[]): string {
+/** Returns everything that needs to be created in the correct order. */
+export function targets(tables: TableInfo[]): Target[] {
 	const taken = takenBySchema(tables);
 
 	/** The names already used in the schema this table lives in. */
 	const namesIn = (t: TableInfo): Set<string> => taken.get(t.schema)!;
 
-	const statements = [
-		...schemaStatements([...taken.keys()]),
-		...domainStatements(storages(tables)),
-		...tables.map(t => tableStatement(t, namesIn(t))),
-		...tables.flatMap(t => foreignKeyStatement(t, namesIn(t))),
-		...tables.flatMap(t => indexStatement(t, namesIn(t))),
+	return [
+		...schemaTargets([...taken.keys()]),
+		...domainTargets(storages(tables)),
+		...tables.map(t => tableTarget(t, namesIn(t))),
+		...tables.flatMap(t => foreignKeyTargets(t, namesIn(t))),
+		...tables.flatMap(t => indexTargets(t, namesIn(t))),
 	];
-
-	return `-- Generated from the system definition. Edit the definition, not this.\n\n`
-		+ statements.join(';\n\n') + ';\n';
 }
+
+/** The SQL script that creates the schema for all the tables. */
+export const schemaSql = (tables: TableInfo[]): string =>
+	script(targets(tables).map(t => t.sql),
+		'Generated from the system definition. Edit the definition, not this.');

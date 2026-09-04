@@ -11,6 +11,7 @@
     "build:watch": "tsc -p tsconfig.json --watch",
     "build:watch:frontend": "tsc -p tsconfig.frontend.json --watch",
     "db:create": "node --env-file=.env dist/example/schema.js",
+    "db:update": "node --env-file=.env dist/example/update.js",
     "db:down": "docker compose down -v",
     "db:up": "docker compose up -d",
     "db:reset": "docker compose down -v && docker compose up -d && npm run db:create -- --apply",

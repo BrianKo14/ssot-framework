@@ -20,12 +20,32 @@ export interface Target {
 	key: string;
 	/** The SQL statement that creates it. */
 	sql: string;
+	/** Shape of the object, to be used in comparisons. */
+	shape?: string;
 	/** Things bundled with it, e.g. a table's columns. */
 	parts?: Target[];
 	/** This is the table.
 	 * It only gets set when adding a required column with no default value that might already have rows.
 	 * `sql` only applies while this table holds no rows. */
 	onlyIfEmpty?: TableInfo;
+}
+
+/** One database object that is already there, mirror of `Target`.
+ * To be used in comparisons and drop statements.
+ * Not all the objects have all the fields. */
+export interface Held {
+	key: string;
+	kind: ObjectKind;
+	schema: string;
+	name: string;
+	/** The table where it lives; else null. */
+	in: string | null;
+	/** Its columns, in order; else null. */
+	columns: string[] | null;
+	/** Shape of the object, to be used in comparisons. */
+	shape: string | null;
+	/** For FKs, the key of the index they depend on. */
+	dependsOn: string | null;
 }
 
 /** List of SQL commands -> SQL (text) script. */
@@ -97,6 +117,25 @@ const domainTargets = (byName: Map<string, string>): Target[] =>
 		});
 
 
+// --- Bodies ---
+
+const FOREIGN_KEY = 'foreign key';
+const PRIMARY_KEY = 'primary key';
+
+export const pkBody = (cols: string): string => `${PRIMARY_KEY} (${cols})`;
+export const ukBody = (cols: string): string => `unique (${cols})`;
+export const fkBody = (cols: string, to: string, targetCols: string): string =>
+	`${FOREIGN_KEY} (${cols}) references ${to} (${targetCols})`;
+export const indexBody = (cols: string, unique: boolean): string =>
+	`${unique ? 'unique ' : ''}(${cols})`;
+
+export const isForeignKey = (shape: string | null): boolean =>
+	shape !== null && shape.startsWith(`${FOREIGN_KEY} (`);
+
+export const isPrimaryKey = (shape: string | null): boolean =>
+	shape !== null && shape.startsWith(`${PRIMARY_KEY} (`);
+
+
 // --- Constraints ---
 
 /** A constraint by name and body. */
@@ -111,14 +150,15 @@ const inline = (c: Constraint): string => `constraint ${q(c.name)} ${c.body}`;
 const constraintTarget = (t: TableInfo, c: Constraint): Target => ({
 	key: objectKey('constraint', t.schema, t.table, c.name),
 	sql: `alter table ${tableRef(t)} add ${inline(c)}`,
+	shape: c.body,
 });
 
 /** A table's own keys, in the order `create table` writes them: the pk, then the uks. */
 const keyConstraints = (t: TableInfo, taken: Set<string>): Constraint[] => [
-	{ name: generatedName([t.table, 'pk'], taken), body: `primary key (${columnList(t.pk)})` },
+	{ name: generatedName([t.table, 'pk'], taken), body: pkBody(columnList(t.pk)) },
 	...Object.entries(t.uks).map(([uk, cols]) => ({
 		name: generatedName([t.table, uk, 'uk'], taken),
-		body: `unique (${columnList(cols)})`,
+		body: ukBody(columnList(cols)),
 	})),
 ];
 
@@ -163,9 +203,7 @@ function tableTarget(t: TableInfo, taken: Set<string>): Target {
 const foreignKeyTargets = (t: TableInfo, taken: Set<string>): Target[] =>
 	t.references.map(ref => constraintTarget(t, {
 		name: generatedName([t.table, ref.name, 'fk'], taken),
-		body: `foreign key (${columnList(ref.columns)})`
-			// the target's own schema, so a fk across schemas needs no special case
-			+ ` references ${tableRef(ref.to)} (${columnList(ref.targetColumns)})`,
+		body: fkBody(columnList(ref.columns), tableRef(ref.to), columnList(ref.targetColumns)),
 	}));
 
 /** Determines if a list of columns (in order) is the start of a key, in order. */
@@ -180,15 +218,19 @@ const indexTargets = (t: TableInfo, taken: Set<string>): Target[] =>
 		.map(ref => {
 			const name = generatedName([t.table, ref.name, 'ix'], taken);
 
+			const body = indexBody(columnList(ref.columns), false);
+
 			return {
 				key: objectKey('index', t.schema, name),
-				sql: `create index ${q(name)} on ${tableRef(t)} (${columnList(ref.columns)})`,
+				sql: `create index ${q(name)} on ${tableRef(t)} ${body}`,
+				shape: body,
 			};
 		});
 
 
 // --- The schema ---
 
+/** @returns Schema names -> set of object names in that schema. */
 function takenBySchema(tables: TableInfo[]): Map<string, Set<string>> {
 	const bySchema = new Map<string, Set<string>>();
 
@@ -214,10 +256,15 @@ export function targets(tables: TableInfo[]): Target[] {
 	const namesIn = (t: TableInfo): Set<string> => taken.get(t.schema)!;
 
 	return [
+		// Schemas
 		...schemaTargets([...taken.keys()]),
+		// Domains
 		...domainTargets(storages(tables)),
+		// Tables
 		...tables.map(t => tableTarget(t, namesIn(t))),
+		// Foreign keys
 		...tables.flatMap(t => foreignKeyTargets(t, namesIn(t))),
+		// Indexes
 		...tables.flatMap(t => indexTargets(t, namesIn(t))),
 	];
 }
@@ -226,3 +273,54 @@ export function targets(tables: TableInfo[]): Target[] {
 export const schemaSql = (tables: TableInfo[]): string =>
 	script(targets(tables).map(t => t.sql),
 		'Generated from the system definition. Edit the definition, not this.');
+
+
+// --- Dropping objects ---
+
+function inTable(h: Held): string {
+	if (h.in === null) throw new Error(`${h.key} names no table to alter`);
+
+	return qualified(h.schema, h.in);
+}
+
+function dropOne(h: Held): string {
+	switch (h.kind) {
+		case 'constraint': return `alter table ${inTable(h)} drop constraint ${q(h.name)}`;
+		case 'column': return `alter table ${inTable(h)} drop column ${q(h.name)}`;
+		case 'index': return `drop index ${qualified(h.schema, h.name)}`;
+		default: throw new Error(`${h.key} does not leave on its own`);
+	}
+}
+
+/** A `--` line above a statement, e.g. what a drop is about to take with it. */
+const noted = (note: string | undefined, sql: string): string =>
+	note === undefined ? sql : `-- ${note}\n${sql}`;
+
+/** The statements that remove everything in `removals`, in the right order for Postgres.
+ * @param notes a line to write above an object's statement, by `Held.key` */
+export function dropStatements(removals: Held[], notes: ReadonlyMap<string, string>): string[] {
+	const of = (kind: ObjectKind, which: (h: Held) => boolean = () => true): Held[] =>
+		removals.filter(h => h.kind === kind && which(h));
+
+	const alone = (held: Held[]): string[] =>
+		held.map(h => noted(notes.get(h.key), dropOne(h)));
+
+	const together = (verb: string, held: Held[]): string[] => held.length === 0 ? [] : [
+		[...held.flatMap(h => notes.has(h.key) ? [`-- ${notes.get(h.key)}`] : []),
+			`${verb} ${held.map(h => qualified(h.schema, h.name)).join(', ')}`].join('\n'),
+	];
+
+	return [
+		...alone(of('constraint', h => isForeignKey(h.shape))),
+		...alone(of('index')),
+		...alone(of('constraint', h => !isForeignKey(h.shape))),
+		...alone(of('column')),
+		...together('drop table', of('table')),
+		...together('drop domain', of('domain')),
+	];
+}
+
+/** Lets a column hold null again.
+ * Because `drop constraint` leaves the `not null` after dropping the FK. */
+export const relaxSql = (t: TableInfo, column: ColumnInfo): string =>
+	`alter table ${tableRef(t)} alter column ${q(column.name)} drop not null`;

@@ -29,16 +29,24 @@ The database that comes out is empty.
 
 ## Updating the database
 
-`npm run db:update` compares the system definition against the database and writes the SQL for whatever is missing (schemas, domains, tables, columns, keys, indexes). Nothing is dropped or rewritten, so **the data stays**.
+`npm run db:update` compares the system definition against the database and writes the SQL to keep it in sync with the definition (schemas, domains, tables, columns, keys, indexes).
 
 ```
-npm run db:update              # print what is missing
-npm run db:update -- --apply   # add it to the database
+npm run db:update                     # print what the database is missing
+npm run db:update -- --apply          # add it
+npm run db:update -- --drop           # print that, plus what has to go
+npm run db:update -- --drop --apply   # do both
 ```
 
-It always connects, since comparing means reading the database. If nothing is missing, it writes no SQL. Applying is one statement, so a failure partway leaves the database untouched. Against an empty database it does what `db:create` does.
+It always connects, since comparing means reading the database. If nothing differs, it writes no SQL. Applying is one statement, so a failure partway leaves the database untouched. Against an empty database it does what `db:create` does.
 
-Still not built: removing, renaming, retyping. As of now, anything that no longer matches the definition is left as is.
+### `--drop`
+
+`--drop` is permission to write a `drop`. Without it the command still *compares* but stops if a removal would be necessary.
+
+If a foreign key points to different columns than before, it counts as dropping the old one and making a new one.
+
+`--drop` only checks schemas the code mentions, but within those it'll want to delete anything it finds that the code doesn't mention.
 
 ### Adding a column to a table that has rows
 

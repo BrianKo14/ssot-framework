@@ -7,22 +7,34 @@ import { loadConfig } from '../config.js';
 import type { Db } from '../db/postgres.js';
 import type { TableInfo } from '../schema/model.js';
 import { type CatalogRow, readCatalog } from '../sql/catalog.js';
-import { schemaSql, type Target } from '../sql/ddl.js';
-import { DEFAULT_SCHEMA, tableRef } from '../sql/identifier.js';
-import { missing, updateSql } from '../sql/migrate.js';
+import { type Held, schemaSql, type Target } from '../sql/ddl.js';
+import { DEFAULT_SCHEMA, qualified, tableRef } from '../sql/identifier.js';
+import { changes, type Changes, updateSql } from '../sql/migrate.js';
 import { run, waitForDb } from './cli.js';
 
-const CREATE_USAGE = 'usage: npm run db:create [-- --apply]';
-const UPDATE_USAGE = 'usage: npm run db:update [-- --apply]';
 
-/** If `--apply` is specified, the SQL will be applied to the database.
- * If not, it will be printed to stdout. */
-function wantsApply(argv: string[], usage: string): boolean {
-	const unknown = argv.filter(arg => arg !== '--apply');
+// --- Options ---
+
+/** Command options:
+ *
+ * * `--apply` runs the SQL instead of printing it.
+ * * `--drop` allows removing objects from the database. */
+const OPTION_NAMES = ['apply', 'drop'] as const;
+type Options = Record<typeof OPTION_NAMES[number], boolean>;
+
+// Documentation
+const CREATE_USAGE = 'usage: npm run db:create [-- --apply]';
+const UPDATE_USAGE = 'usage: npm run db:update [-- --drop] [-- --apply]';
+
+/** Reads the options off the command line, refusing anything it does not know. */
+function options(argv: string[], usage: string, allowed: (keyof Options)[]): Options {
+	const flags = allowed.map(name => `--${name}`);
+	const unknown = argv.filter(arg => !flags.includes(arg));
 
 	if (unknown.length) throw new Error(`unknown option ${unknown[0]}\n${usage}`);
 
-	return argv.includes('--apply');
+	// True iff an option is present
+	return Object.fromEntries(OPTION_NAMES.map(name => [name, argv.includes(`--${name}`)])) as Options;
 }
 
 /** Application's tables + authentication tables. */
@@ -34,7 +46,7 @@ const allTables = (tables: TableInfo[]): TableInfo[] => [...authTables, ...table
 async function create(tables: TableInfo[]): Promise<void> {
 	const sql = schemaSql(allTables(tables));
 
-	if (!wantsApply(process.argv.slice(2), CREATE_USAGE)) { console.log(sql); return; }
+	if (!options(process.argv.slice(2), CREATE_USAGE, ['apply']).apply) { console.log(sql); return; }
 
 	const db = await waitForDb(loadConfig().databaseUrl);
 
@@ -47,7 +59,7 @@ async function create(tables: TableInfo[]): Promise<void> {
 }
 
 
-// --- Updating (SCOPE 5a) ---
+// --- Updating ---
 
 /** Prevents adding required columns to tables that already have data,
  * if those columns don't have default values. */
@@ -64,8 +76,52 @@ async function refuseUnfillable(db: Db, additions: Target[]): Promise<void> {
 	}
 }
 
+/** Refuse to drop objects that are not explicitly allowed. */
+function refuseUndroppable(removals: Held[], opts: Options): void {
+	if (!removals.length || opts.drop) return;
+
+	throw new Error(`the database holds ${removals.length} object(s) the definition does not ask `
+		+ `for, or asks for differently:\n`
+		+ removals.map(h => `  ${h.key}`).join('\n')
+		+ `\nremoving or rebuilding one means dropping it, so pass --drop to write that`);
+}
+
+/** Returns a map of the notes for each removal, by `Held.key`. */
+async function rowNotes(db: Db, removals: Held[]): Promise<Map<string, string>> {
+	const notes = new Map<string, string>();
+	const counted = new Map<string, number>();
+
+	for (const h of removals) {
+		const holder = h.kind === 'table' ? h.name : h.kind === 'column' ? h.in : null;
+
+		if (holder === null) continue;
+
+		const table = qualified(h.schema, holder);
+
+		if (!counted.has(table)) {
+			const [row] = await db.query<{ n: string }>(`select count(*) as n from ${table}`);
+
+			counted.set(table, Number(row?.n ?? 0));
+		}
+
+		const rows = counted.get(table)!;
+
+		if (rows) notes.set(h.key, `${h.key} — ${table} holds ${rows} row(s)`);
+	}
+
+	return notes;
+}
+
+/** Report the changes that were made. */
+function report(c: Changes): void {
+	const done = [c.removals.length && `${c.removals.length} object(s) removed or rebuilt`,
+		c.additions.length && `${c.additions.length} object(s) added`].filter(Boolean);
+
+	console.log(done.length ? done.join(', ') : 'nothing to do');
+}
+
 async function update(tables: TableInfo[]): Promise<void> {
-	const apply = wantsApply(process.argv.slice(2), UPDATE_USAGE);
+	const opts = options(process.argv.slice(2), UPDATE_USAGE, ['apply', 'drop']);
 	const all = allTables(tables);
 	const db = await waitForDb(loadConfig().databaseUrl);
 
@@ -73,21 +129,22 @@ async function update(tables: TableInfo[]): Promise<void> {
 		const schemas = [...new Set([DEFAULT_SCHEMA, ...all.map(t => t.schema)])];
 
 		const held = await readCatalog((text, params) => db.query<CatalogRow>(text, params), schemas);
-		const additions = missing(all, held);
+		const found = changes(all, held);
 
-		if (!additions.length) {
+		if (!found.removals.length && !found.additions.length) {
 			console.log('the database already holds everything the definition asks for');
 			return;
 		}
 
-		await refuseUnfillable(db, additions);
+		refuseUndroppable(found.removals, opts);
+		await refuseUnfillable(db, found.additions);
 
-		const sql = updateSql(additions);
+		const sql = updateSql(found, await rowNotes(db, found.removals));
 
-		if (!apply) { console.log(sql); return; }
+		if (!opts.apply) { console.log(sql); return; }
 
 		await db.query(sql);
-		console.log(`${additions.length} object(s) added`);
+		report(found);
 	} finally {
 		await db.close();
 	}

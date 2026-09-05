@@ -12,8 +12,11 @@ export const DEFAULT_SCHEMA = 'public';
 export const qualified = (schema: string, name: string) => `${q(schema)}.${q(name)}`;
 export const tableRef = (t: TableInfo) => qualified(t.schema, t.table);
 
-/** List of column names -> comma-separated string for SQL. */
-export const columnList = (cols: ColumnInfo[]) => cols.map(c => q(c.name)).join(', ');
+/** List of names -> comma-separated string of quoted identifiers for SQL. */
+export const nameList = (names: string[]) => names.map(q).join(', ');
+
+/** List of columns -> comma-separated string for SQL. */
+export const columnList = (cols: ColumnInfo[]) => nameList(cols.map(c => c.name));
 
 /** Throws an error if the SQL type is not valid. */
 export function storageType(sqlType: string): string {

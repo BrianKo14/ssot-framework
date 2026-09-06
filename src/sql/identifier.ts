@@ -18,13 +18,52 @@ export const nameList = (names: string[]) => names.map(q).join(', ');
 /** List of columns -> comma-separated string for SQL. */
 export const columnList = (cols: ColumnInfo[]) => nameList(cols.map(c => c.name));
 
+
+// --- Types ---
+
+/** A SQL type: a name + modfier, e.g. `varchar` + `(100)`. */
+const TYPE_SHAPE = /^([a-z][a-z0-9 ]*?)(\(\d{1,4}(,\d{1,4})?\))?$/i;
+
 /** Throws an error if the SQL type is not valid. */
 export function storageType(sqlType: string): string {
-	if (!/^[a-z][a-z0-9 ]*(\(\d{1,4}(,\d{1,4})?\))?$/i.test(sqlType))
+	if (!TYPE_SHAPE.test(sqlType))
 		throw new Error(`"${sqlType}" does not read as a SQL type`);
 
 	return sqlType;
 }
+
+/** Postgres type names. What we write -> what Postgres answers.
+ * With `%` where the modifier goes.
+*/
+const CANONICAL: ReadonlyMap<string, string> = new Map([
+	['bool', 'boolean'],
+	['bpchar', 'character%'],
+	['char', 'character%'],
+	['decimal', 'numeric%'],
+	['float4', 'real'],
+	['float8', 'double precision'],
+	['int', 'integer'],
+	['int2', 'smallint'],
+	['int4', 'integer'],
+	['int8', 'bigint'],
+	['time', 'time% without time zone'],
+	['timestamp', 'timestamp% without time zone'],
+	['timestamptz', 'timestamp% with time zone'],
+	['timetz', 'time% with time zone'],
+	['varchar', 'character varying%'],
+]);
+
+/** A SQL type as the catalogue spells it, e.g. `varchar(100)` -> `character varying(100)`. */
+export function canonicalType(sqlType: string): string {
+	const parts = TYPE_SHAPE.exec(storageType(sqlType));
+
+	if (!parts) throw new Error(`"${sqlType}" does not read as a SQL type`);
+
+	const [, name, modifier = ''] = parts;
+
+	return (CANONICAL.get(name.toLowerCase()) ?? `${name}%`).replace('%', modifier);
+}
+
 
 
 // --> Cutting names the framework generates (constaints, indexes)

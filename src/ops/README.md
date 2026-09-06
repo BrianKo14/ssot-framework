@@ -32,10 +32,11 @@ The database that comes out is empty.
 `npm run db:update` compares the system definition against the database and writes the SQL to keep it in sync with the definition (schemas, domains, tables, columns, keys, indexes).
 
 ```
-npm run db:update                     # print what the database is missing
-npm run db:update -- --apply          # add it
-npm run db:update -- --drop           # print that, plus what has to go
-npm run db:update -- --drop --apply   # do both
+npm run db:update                       # print what the database is missing
+npm run db:update -- --apply            # add it
+npm run db:update -- --drop             # print that, plus what has to go
+npm run db:update -- --retype           # print that, plus the columns whose body changed
+npm run db:update -- --drop --retype --apply
 ```
 
 It always connects, since comparing means reading the database. If nothing differs, it writes no SQL. Applying is one statement, so a failure partway leaves the database untouched. Against an empty database it does what `db:create` does.
@@ -47,6 +48,12 @@ It always connects, since comparing means reading the database. If nothing diffe
 If a foreign key points to different columns than before, it counts as dropping the old one and making a new one.
 
 `--drop` only checks schemas the code mentions, but within those it'll want to delete anything it finds that the code doesn't mention.
+
+### `--retype`
+
+`--retype` is permission to change the body of a column that already holds data: its type or nullability. Without it the command still *compares* but stops and names each such column
+
+A column are altered in place and the data is converted on the way.
 
 ### Adding a column to a table that has rows
 

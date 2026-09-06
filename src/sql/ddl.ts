@@ -2,11 +2,13 @@
 
 import type { ColumnInfo, TableInfo } from '../schema/model.js';
 import {
-	checkedName, checkedSchema, columnList, DEFAULT_SCHEMA, generatedName, q, qualified, storageType, tableRef,
+	canonicalType, checkedName, checkedSchema, columnList, DEFAULT_SCHEMA, generatedName, q, qualified,
+	storageType, tableRef,
 } from './identifier.js';
 
 
-// --- Objects the framework creates ---
+// --- OBJECTS FOR COMPARISON ---
+// `Target`s (what the definition asks for) against `Held` (what the database has)
 
 export type ObjectKind = 'schema' | 'domain' | 'table' | 'column' | 'constraint' | 'index';
 
@@ -30,23 +32,52 @@ export interface Target {
 	onlyIfEmpty?: TableInfo;
 }
 
-/** One database object that is already there, mirror of `Target`.
- * To be used in comparisons and drop statements.
- * Not all the objects have all the fields. */
-export interface Held {
+/** Fields every held object has, whatever its kind. */
+interface HeldBase {
 	key: string;
-	kind: ObjectKind;
 	schema: string;
 	name: string;
-	/** The table where it lives; else null. */
-	in: string | null;
-	/** Its columns, in order; else null. */
-	columns: string[] | null;
+}
+
+export interface SchemaHeld extends HeldBase { kind: 'schema' }
+export interface TableHeld extends HeldBase { kind: 'table' }
+export interface DomainHeld extends HeldBase { kind: 'domain'; shape: string }
+export interface ColumnHeld extends HeldBase {
+	kind: 'column';
+	/** The table where it lives. */
+	in: string;
+	/** The domain type it depends on; else null. */
+	dependsOn: string | null;
+	/** The type it has and whether it admits null: the halves of its shape,
+	 * so a change can be told from a rebuild. */
+	type: string;
+	notNull: boolean;
+}
+export interface ConstraintHeld extends HeldBase {
+	kind: 'constraint';
+	/** The table where it lives. */
+	in: string;
 	/** Shape of the object, to be used in comparisons. */
-	shape: string | null;
-	/** For FKs, the key of the index they depend on. */
+	shape: string;
+	/** Its columns, in order. */
+	columns: string[];
+	/** If an FK, the key it references; else null. */
 	dependsOn: string | null;
 }
+export interface IndexHeld extends HeldBase {
+	kind: 'index';
+	/** The table where it lives. */
+	in: string;
+	/** Shape of the object, to be used in comparisons. */
+	shape: string;
+	/** Its columns, in order. */
+	columns: string[];
+}
+
+/** One database object that is already there, mirror of `Target`.
+ * To be used in comparisons and drop statements.
+ * Which fields apply depends on `kind`. */
+export type Held = SchemaHeld | TableHeld | DomainHeld | ColumnHeld | ConstraintHeld | IndexHeld;
 
 /** List of SQL commands -> SQL (text) script. */
 export const script = (statements: string[], header: string): string =>
@@ -54,7 +85,7 @@ export const script = (statements: string[], header: string): string =>
 	+ statements.map(s => `${s};\n`).join('\n');
 
 
-// --- Schemas ---
+// --- SCHEMAS
 
 /** `create schema` for every schema except the default one, which Postgres already provides. */
 const schemaTargets = (schemas: string[]): Target[] =>
@@ -62,7 +93,7 @@ const schemaTargets = (schemas: string[]): Target[] =>
 		({ key: objectKey('schema', schema), sql: `create schema ${q(schema)}` }));
 
 
-// --- Domains (custom types) ---
+// --- DOMAINS ---
 
 /** A domain's qualified name. */
 const domainRef = (typeName: string): string => qualified(DEFAULT_SCHEMA, typeName);
@@ -70,7 +101,7 @@ const domainRef = (typeName: string): string => qualified(DEFAULT_SCHEMA, typeNa
 /** Type names Postgres already holds in `pg_catalog`.
  * We guarantee that no domain is created with the same name as one of these.
  * 
- * This is a readability guard. We forbid this becausee.g. a if a domain `text` existed,
+ * This is a readability guard. We forbid this because e.g. a if a domain `text` existed,
  * a person writing a query by hand and typing `text` would get the built-in type, no the domain.
  * Even though every type reference is fully qualified `"public"."text"`. */
 const SHADOWED = new Set([
@@ -113,14 +144,16 @@ const domainTargets = (byName: Map<string, string>): Target[] =>
 			return {
 				key: objectKey('domain', DEFAULT_SCHEMA, typeName),
 				sql: `create domain ${domainRef(typeName)} as ${sqlType}`,
+				shape: canonicalType(sqlType),		// a domain that is stored otherwise is rebuilt
 			};
 		});
 
 
-// --- Bodies ---
+// --- BODIES ---
 
 const FOREIGN_KEY = 'foreign key';
 const PRIMARY_KEY = 'primary key';
+const NOT_NULL = ' not null';
 
 export const pkBody = (cols: string): string => `${PRIMARY_KEY} (${cols})`;
 export const ukBody = (cols: string): string => `unique (${cols})`;
@@ -128,15 +161,13 @@ export const fkBody = (cols: string, to: string, targetCols: string): string =>
 	`${FOREIGN_KEY} (${cols}) references ${to} (${targetCols})`;
 export const indexBody = (cols: string, unique: boolean): string =>
 	`${unique ? 'unique ' : ''}(${cols})`;
+export const columnBody = (type: string, notNull: boolean): string =>
+	`${type}${notNull ? NOT_NULL : ''}`;
 
-export const isForeignKey = (shape: string | null): boolean =>
-	shape !== null && shape.startsWith(`${FOREIGN_KEY} (`);
-
-export const isPrimaryKey = (shape: string | null): boolean =>
-	shape !== null && shape.startsWith(`${PRIMARY_KEY} (`);
+export const isForeignKey = (shape: string): boolean => shape.startsWith(`${FOREIGN_KEY} (`);
 
 
-// --- Constraints ---
+// --- CONSTRAINTS ---
 
 /** A constraint by name and body. */
 interface Constraint {
@@ -163,20 +194,30 @@ const keyConstraints = (t: TableInfo, taken: Set<string>): Constraint[] => [
 ];
 
 
-// --- Tables and columns ---
+// --- TABLES AND COLUMNS ---
 
+/** Is this column's type stored in a domain of its own? */
+export const hasDomain = (c: ColumnInfo): boolean => needsDomain(c.typeName, c.type.sqlType);
+
+/** The type a column is declared with. */
 const columnType = (c: ColumnInfo): string =>
-	needsDomain(c.typeName, c.type.sqlType) ? domainRef(c.typeName) : storageType(c.type.sqlType);
+	hasDomain(c) ? domainRef(c.typeName) : storageType(c.type.sqlType);
+
+/** The same type as the catalogue reports it: a domain by its name, a plain type in
+ * Postgres's own spelling. Only for comparing — what gets written is `columnType`. */
+export const comparedType = (c: ColumnInfo): string =>
+	hasDomain(c) ? domainRef(c.typeName) : canonicalType(c.type.sqlType);
 
 /** e.g. `"nombre" varchar(100) not null default 'sin nombre'` */
 const columnDefinition = (c: ColumnInfo): string =>
-	`${q(checkedName(c.name, 'column'))} ${columnType(c)}${c.nullable ? '' : ' not null'}`
+	`${q(checkedName(c.name, 'column'))} ${columnBody(columnType(c), !c.nullable)}`
 	+ (c.defaultSql === null ? '' : ` default ${c.defaultSql}`);
 
 function columnTarget(t: TableInfo, c: ColumnInfo): Target {
 	const target: Target = {
 		key: objectKey('column', t.schema, t.table, c.name),
 		sql: `alter table ${tableRef(t)} add column ${columnDefinition(c)}`,
+		shape: columnBody(comparedType(c), !c.nullable),
 	};
 
 	if (!c.nullable && c.defaultSql === null) target.onlyIfEmpty = t;
@@ -197,7 +238,7 @@ function tableTarget(t: TableInfo, taken: Set<string>): Target {
 }
 
 
-// --- References ---
+// --- REFERENCES ---
 
 /** Foreign key constraints from a table. */
 const foreignKeyTargets = (t: TableInfo, taken: Set<string>): Target[] =>
@@ -228,7 +269,7 @@ const indexTargets = (t: TableInfo, taken: Set<string>): Target[] =>
 		});
 
 
-// --- The schema ---
+// --- THE SCHEMA ---
 
 /** @returns Schema names -> set of object names in that schema. */
 function takenBySchema(tables: TableInfo[]): Map<string, Set<string>> {
@@ -256,15 +297,15 @@ export function targets(tables: TableInfo[]): Target[] {
 	const namesIn = (t: TableInfo): Set<string> => taken.get(t.schema)!;
 
 	return [
-		// Schemas
+		// 1. Schemas
 		...schemaTargets([...taken.keys()]),
-		// Domains
+		// 2. Domains
 		...domainTargets(storages(tables)),
-		// Tables
+		// 3. Tables
 		...tables.map(t => tableTarget(t, namesIn(t))),
-		// Foreign keys
+		// 4. Foreign keys
 		...tables.flatMap(t => foreignKeyTargets(t, namesIn(t))),
-		// Indexes
+		// 5. Indexes
 		...tables.flatMap(t => indexTargets(t, namesIn(t))),
 	];
 }
@@ -275,11 +316,10 @@ export const schemaSql = (tables: TableInfo[]): string =>
 		'Generated from the system definition. Edit the definition, not this.');
 
 
-// --- Dropping objects ---
 
-function inTable(h: Held): string {
-	if (h.in === null) throw new Error(`${h.key} names no table to alter`);
+// --- DROPPING OBJECTS ---
 
+function inTable(h: ColumnHeld | ConstraintHeld | IndexHeld): string {
 	return qualified(h.schema, h.in);
 }
 
@@ -299,8 +339,8 @@ const noted = (note: string | undefined, sql: string): string =>
 /** The statements that remove everything in `removals`, in the right order for Postgres.
  * @param notes a line to write above an object's statement, by `Held.key` */
 export function dropStatements(removals: Held[], notes: ReadonlyMap<string, string>): string[] {
-	const of = (kind: ObjectKind, which: (h: Held) => boolean = () => true): Held[] =>
-		removals.filter(h => h.kind === kind && which(h));
+	const ofKind = <K extends ObjectKind>(kind: K): Extract<Held, { kind: K }>[] =>
+		removals.filter((h): h is Extract<Held, { kind: K }> => h.kind === kind);
 
 	const alone = (held: Held[]): string[] =>
 		held.map(h => noted(notes.get(h.key), dropOne(h)));
@@ -310,17 +350,72 @@ export function dropStatements(removals: Held[], notes: ReadonlyMap<string, stri
 			`${verb} ${held.map(h => qualified(h.schema, h.name)).join(', ')}`].join('\n'),
 	];
 
+	const constraints = ofKind('constraint');
+
 	return [
-		...alone(of('constraint', h => isForeignKey(h.shape))),
-		...alone(of('index')),
-		...alone(of('constraint', h => !isForeignKey(h.shape))),
-		...alone(of('column')),
-		...together('drop table', of('table')),
-		...together('drop domain', of('domain')),
+		// 1. Constraints (foreign keys)
+		...alone(constraints.filter(h => isForeignKey(h.shape))),
+		// 2. Indexes
+		...alone(ofKind('index')),
+		// 3. Other constraints (non-foreign key)
+		...alone(constraints.filter(h => !isForeignKey(h.shape))),
+		// 4. Columns
+		...alone(ofKind('column')),
+		// 5. Tables
+		...together('drop table', ofKind('table')),
+		// 6. Domains
+		...together('drop domain', ofKind('domain')),
 	];
 }
 
-/** Lets a column hold null again.
- * Because `drop constraint` leaves the `not null` after dropping the FK. */
-export const relaxSql = (t: TableInfo, column: ColumnInfo): string =>
-	`alter table ${tableRef(t)} alter column ${q(column.name)} drop not null`;
+// --- CHANGING COLUMNS ---
+
+// A column is the one object that is never rebuilt when its body drifts: dropping it would
+// take the data with it. It is altered in place instead.
+
+/** Where a column's type is moving to. */
+export type Retype =
+	// When the column is being moved to the type declared in the definition.
+	| 'declared'
+	// When the column is being moved off a domain that is being rebuilt, onto the plain type behind it.
+	| 'storage'
+	// When the column is being moved back onto its domain once that is rebuilt.
+	| 'rejoin';
+
+/** One column the database holds differently than the definition declares it. */
+export interface Alteration {
+	table: TableInfo;
+	column: ColumnInfo;
+	/** The type to move to, or null when the type is not what drifted. */
+	retype: Retype | null;
+	/** The nullability to declare, or null when it already matches. */
+	notNull: boolean | null;
+}
+
+export const alterationKey = (a: Alteration): string =>
+	objectKey('column', a.table.schema, a.table.table, a.column.name);
+
+/** Provides the `using` clause for converting a column's type.
+ * I.e. don't use the default assignment cast. */
+const conversion = (c: ColumnInfo): string =>
+	c.type.convert === undefined ? '' : ` using ${c.type.convert(q(c.name))}`;
+
+/** The SQL to use for each retyping option. */
+const RETYPED: Readonly<Record<Retype, (c: ColumnInfo) => string>> = {
+	declared: c => columnType(c) + conversion(c),
+	storage: c => storageType(c.type.sqlType) + conversion(c),
+	rejoin: c => columnType(c),
+};
+
+/** The statements to alter columns. One for type, one for nullability, if needed.
+ * @param notes a line to write above a column's statements, by `alterationKey` */
+export const alterStatements = (alterations: Alteration[], notes: ReadonlyMap<string, string>): string[] =>
+	alterations.flatMap(a => {
+		const alter = (what: string): string =>
+			`alter table ${tableRef(a.table)} alter column ${q(a.column.name)} ${what}`;
+
+		return [
+			...a.retype === null ? [] : [alter(`type ${RETYPED[a.retype](a.column)}`)],
+			...a.notNull === null ? [] : [alter(`${a.notNull ? 'set' : 'drop'} not null`)],
+		].map((sql, i) => i === 0 ? noted(notes.get(alterationKey(a)), sql) : sql);
+	});

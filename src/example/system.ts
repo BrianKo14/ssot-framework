@@ -12,6 +12,9 @@ import { textual } from '../types/handler.js';
 
 const emailBase: BaseType = attrs => ({
 	sqlType: 'text',
+
+	convert: from => `nullif(lower(trim(${from})), '')`,
+
 	...textual('an e-mail address',
 		/^[^\s@]+@[^\s@]+\.[^\s@]+$/,
 		m => [...m[0]].length <= (attrs?.kind === 'bound' ? attrs.maxLength : Infinity) ? m[0] : undefined),

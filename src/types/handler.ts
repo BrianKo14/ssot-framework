@@ -27,7 +27,11 @@ export type Recogniser<T> = {
  * otherwise `format.ts` would have to re-check at runtime. */
 export type TypeHandler<T> = Recogniser<T> & {
 	/** The SQL type of the handler. Must be a valid SQL type. */
-	readonly sqlType: string;
+	readonly sqlType: string
+
+	/** How a column with a different type is converted to this one, in SQL.
+	 * If left out, the conversion is Postgres's own. */
+	readonly convert?: (from: string) => string;
 } & (T extends CellValue ? unknown : Written<T>);
 
 /** Collection of handlers exported to the framework. */

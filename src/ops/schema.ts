@@ -7,9 +7,11 @@ import { loadConfig } from '../config.js';
 import type { Db } from '../db/postgres.js';
 import type { TableInfo } from '../schema/model.js';
 import { type CatalogRow, readCatalog } from '../sql/catalog.js';
-import { type Held, schemaSql, type Target } from '../sql/ddl.js';
+import {
+	type Alteration, alterationKey, columnBody, comparedType, type Held, schemaSql, type Target,
+} from '../sql/ddl.js';
 import { DEFAULT_SCHEMA, qualified, tableRef } from '../sql/identifier.js';
-import { changes, type Changes, updateSql } from '../sql/migrate.js';
+import { altered, changes, type Changes, updateSql } from '../sql/migrate.js';
 import { run, waitForDb } from './cli.js';
 
 
@@ -18,13 +20,14 @@ import { run, waitForDb } from './cli.js';
 /** Command options:
  *
  * * `--apply` runs the SQL instead of printing it.
- * * `--drop` allows removing objects from the database. */
-const OPTION_NAMES = ['apply', 'drop'] as const;
+ * * `--drop` allows removing objects from the database.
+ * * `--retype` allows changing the type of columns that already hold data. */
+const OPTION_NAMES = ['apply', 'drop', 'retype'] as const;
 type Options = Record<typeof OPTION_NAMES[number], boolean>;
 
 // Documentation
 const CREATE_USAGE = 'usage: npm run db:create [-- --apply]';
-const UPDATE_USAGE = 'usage: npm run db:update [-- --drop] [-- --apply]';
+const UPDATE_USAGE = 'usage: npm run db:update [-- --drop] [-- --retype] [-- --apply]';
 
 /** Reads the options off the command line, refusing anything it does not know. */
 function options(argv: string[], usage: string, allowed: (keyof Options)[]): Options {
@@ -86,18 +89,44 @@ function refuseUndroppable(removals: Held[], opts: Options): void {
 		+ `\nremoving or rebuilding one means dropping it, so pass --drop to write that`);
 }
 
-/** Returns a map of the notes for each removal, by `Held.key`. */
-async function rowNotes(db: Db, removals: Held[]): Promise<Map<string, string>> {
+/** The string representation of the column's body as declared in the definition. */
+const declaredBody = (a: Alteration): string =>
+	columnBody(comparedType(a.column), !a.column.nullable);
+
+/** Prevents the modification of column bodies if the column already holds data and the change is not explicitly allowed. */
+function refuseUnretypable(c: Changes, opts: Options): void {
+	const columns = altered(c);
+
+	if (!columns.length || opts.retype) return;
+
+	const bodies = new Map([...c.detachments, ...c.alterations]
+		.map(a => [alterationKey(a), declaredBody(a)]));
+
+	throw new Error(`the database holds ${columns.length} column(s) with a body other than the `
+		+ `one the definition declares:\n`
+		+ columns.map(key => `  ${key} — declared ${bodies.get(key)}`).join('\n')
+		+ `\nchanging one means converting the data it holds, so pass --retype to write that`);
+}
+
+interface Touched { key: string; table: string }
+
+/** An object is touched if it is going to be modified, deleted, or created by a statement.*/
+const touched = (c: Changes): Touched[] => [
+	...c.removals.flatMap(h => {
+		const holder = h.kind === 'table' ? h.name : h.kind === 'column' ? h.in : null;
+
+		return holder === null ? [] : [{ key: h.key, table: qualified(h.schema, holder) }];
+	}),
+	...[...c.detachments, ...c.alterations]
+		.map(a => ({ key: alterationKey(a), table: tableRef(a.table) })),
+];
+
+/** Returns a map of the notes for each statement, by `Held.key` / `alterationKey`. */
+async function rowNotes(db: Db, c: Changes): Promise<Map<string, string>> {
 	const notes = new Map<string, string>();
 	const counted = new Map<string, number>();
 
-	for (const h of removals) {
-		const holder = h.kind === 'table' ? h.name : h.kind === 'column' ? h.in : null;
-
-		if (holder === null) continue;
-
-		const table = qualified(h.schema, holder);
-
+	for (const { key, table } of touched(c)) {
 		if (!counted.has(table)) {
 			const [row] = await db.query<{ n: string }>(`select count(*) as n from ${table}`);
 
@@ -106,7 +135,7 @@ async function rowNotes(db: Db, removals: Held[]): Promise<Map<string, string>> 
 
 		const rows = counted.get(table)!;
 
-		if (rows) notes.set(h.key, `${h.key} — ${table} holds ${rows} row(s)`);
+		if (rows) notes.set(key, `${key} — ${table} holds ${rows} row(s)`);
 	}
 
 	return notes;
@@ -115,13 +144,14 @@ async function rowNotes(db: Db, removals: Held[]): Promise<Map<string, string>> 
 /** Report the changes that were made. */
 function report(c: Changes): void {
 	const done = [c.removals.length && `${c.removals.length} object(s) removed or rebuilt`,
-		c.additions.length && `${c.additions.length} object(s) added`].filter(Boolean);
+		c.additions.length && `${c.additions.length} object(s) added`,
+		altered(c).length && `${altered(c).length} column(s) altered`].filter(Boolean);
 
 	console.log(done.length ? done.join(', ') : 'nothing to do');
 }
 
 async function update(tables: TableInfo[]): Promise<void> {
-	const opts = options(process.argv.slice(2), UPDATE_USAGE, ['apply', 'drop']);
+	const opts = options(process.argv.slice(2), UPDATE_USAGE, ['apply', 'drop', 'retype']);
 	const all = allTables(tables);
 	const db = await waitForDb(loadConfig().databaseUrl);
 
@@ -131,15 +161,16 @@ async function update(tables: TableInfo[]): Promise<void> {
 		const held = await readCatalog((text, params) => db.query<CatalogRow>(text, params), schemas);
 		const found = changes(all, held);
 
-		if (!found.removals.length && !found.additions.length) {
+		if (!found.removals.length && !found.additions.length && !altered(found).length) {
 			console.log('the database already holds everything the definition asks for');
 			return;
 		}
 
 		refuseUndroppable(found.removals, opts);
+		refuseUnretypable(found, opts);
 		await refuseUnfillable(db, found.additions);
 
-		const sql = updateSql(found, await rowNotes(db, found.removals));
+		const sql = updateSql(found, await rowNotes(db, found));
 
 		if (!opts.apply) { console.log(sql); return; }
 

@@ -5,9 +5,9 @@ import { authenticated, sessionEnded } from './auth.js';
 import { byId, classed, el } from './dom.js';
 import { download } from './export.js';
 import { filterBar, type FilterBar } from './filters.js';
-import { keyThrough, referencesOf, targetOf, valuesOf } from './fk.js';
+import { type Detail, detailsOf, keyThrough, referencesOf, targetOf, valuesFrom, valuesOf } from './fk.js';
 import { picker, type Picker } from './picker.js';
-import { listPath } from './query.js';
+import { filterQuery, listPath } from './query.js';
 import { router, same, type Router, type View } from './route.js';
 
 type Row = Record<string, unknown>;
@@ -33,7 +33,14 @@ const 	nav = byId('entities'),
 	peekDelete = byId('peek-delete') as HTMLButtonElement,
 	peekCancel = byId('peek-cancel') as HTMLButtonElement,
 	peekSave = byId('peek-save') as HTMLButtonElement,
-	peekClose = byId('peek-close');
+	peekClose = byId('peek-close'),
+	peekDetails = byId('peek-details'),
+	peekTabbar = byId('peek-tabbar'),
+	peekTabs = byId('peek-tabs'),
+	peekDetailGrid = byId('peek-detail-grid'),
+	peekDetailHead = byId('peek-detail-head'),
+	peekDetailRows = byId('peek-detail-rows'),
+	peekDetailEmpty = byId('peek-detail-empty');
 
 const say = (message: string, state: 'ready' | 'busy' | 'error' = 'ready') => {
 	statusLine.textContent = message;
@@ -130,14 +137,30 @@ const header = (t: TableMeta) => (c: ColumnMeta) => named(el('th', c.name, el('s
 /** Shared by the grid's cell and the peek's field, so the two can't disagree on what's editable. */
 const writable = (t: TableMeta, c: ColumnMeta) => !t.pk.includes(c.name) && t.capabilities.includes('update');
 
-const cell = (t: TableMeta, row: Row) => (c: ColumnMeta) => {
-	const fk = fkOf(t, c);
+/** A table drawn on screen: the screen's own grid, or a subtable under the row panel. A row is
+    written the same way on both — only where it is drawn, and what its leading cell holds,
+    differ — so neither can end up reading its own way. */
+interface Sheet {
+	t: TableMeta;
+	head: HTMLElement;
+	body: HTMLElement;
+	table: HTMLElement;
+	/** Shown in place of the rows when there are none. */
+	empty: HTMLElement;
+	/** The fewest rows to draw. Short of that, empty ones make up the difference. */
+	leastRows: number;
+	/** What the row's leading cell holds: see `opener` and `jump`. */
+	handle(row: Row): Node;
+}
+
+const cell = (s: Sheet, row: Row) => (c: ColumnMeta) => {
+	const fk = fkOf(s.t, c);
 	const td = shown('td', row[c.name], fk && fkLink(fk, row, row[c.name]));
 
-	if (!writable(t, c)) return td;
+	if (!writable(s.t, c)) return td;
 
 	td.classList.add('editable');
-	td.addEventListener('dblclick', () => edit(t, row, c, td));
+	td.addEventListener('dblclick', () => edit(s, row, c, td));
 
 	return td;
 };
@@ -231,39 +254,61 @@ const lead = (tag: 'th' | 'td', ...children: Node[]) => {
 	return node;
 };
 
-const opener = (t: TableMeta, row: Row) => {
+/** The screen's handle: it opens the row in the side panel, which is where the screen already is. */
+const opener = (s: Sheet, row: Row) => {
 	const button = el('button');
 
 	button.type = 'button';
 	button.title = 'Ver registro';
 	button.setAttribute('aria-label', 'Ver registro');
-	button.addEventListener('click', () => show(record(t, row, button)));
+	button.addEventListener('click', () => show(record(s, row, button)));
 
-	return lead('td', button);
+	return button;
+};
+
+/** A subtable's handle: a real link to the row's own screen, for the same reason an fk value is
+    one. The panel it sits under is another record's, so this row is read somewhere else. */
+const jump = (t: TableMeta, row: Row) => {
+	const a = el('a');
+
+	a.href = route.href({ screen: t.entity, key: key(t, row), conditions: [] });
+	a.title = `Ver ${t.entity}`;
+	a.setAttribute('aria-label', `Ver ${t.entity}`);
+
+	return a;
 };
 
 /** The one place a row's cells are written. Keeps the lead cell rather than rebuilding it,
     so the peek's reference to its button (which marks the row open) survives. */
-const fill = (tr: HTMLTableRowElement, t: TableMeta, row: Row) => {
-	tr.replaceChildren(tr.querySelector('.lead') ?? opener(t, row), ...t.columns.map(cell(t, row)));
+const fill = (tr: HTMLTableRowElement, s: Sheet, row: Row) => {
+	tr.replaceChildren(tr.querySelector('.lead') ?? lead('td', s.handle(row)), ...s.t.columns.map(cell(s, row)));
 
 	return tr;
 };
 
-const renderGrid = (t: TableMeta, data: Row[]) => {
-	gridHead.replaceChildren(lead('th'), ...t.columns.map(header(t)));
-	gridRows.replaceChildren(...data.map(row => fill(el('tr'), t, row)));
+/** The rows drawn past the data, so a short list still reads as a table rather than as a rule
+    with a caption under it. They hold nothing and answer to nothing — no handle, no editable
+    cell — and `summary` does not count them, because they are not records. */
+const blanks = (s: Sheet, drawn: number) =>
+	Array.from({ length: Math.max(0, s.leastRows - drawn) },
+		() => classed('tr', 'blank', lead('td'), ...s.t.columns.map(() => el('td'))));
 
-	grid.hidden = false;			// show header even with no rows under it
-	emptyNote.hidden = data.length > 0;
+const renderSheet = (s: Sheet, data: Row[]) => {
+	s.head.replaceChildren(lead('th'), ...s.t.columns.map(header(s.t)));
+	s.body.replaceChildren(...data.map(row => fill(el('tr'), s, row)), ...blanks(s, data.length));
+
+	s.table.hidden = false;			// show header even with no rows under it
+	s.empty.hidden = data.length > 0;
 };
 
 /** "1 registro", "2 registros"; an irregular plural passes its own. */
 const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-/** Counted off the grid, not off a second copy of the count kept beside it. */
-const summary = (t: TableMeta) =>
-	`${count(gridRows.childElementCount, 'registro')} · ${count(t.columns.length, 'campo')}`;
+/** Counted off the sheet itself, not off a second copy of the count kept beside it — the rows
+    it drew to look like a table are not among them. */
+const summary = (s: Sheet) =>
+	`${count(s.body.querySelectorAll('tr:not(.blank)').length, 'registro')}`
+	+ ` · ${count(s.t.columns.length, 'campo')}`;
 
 /** What each capability is called on screen. `Record<Capability, …>` rather than a loose map:
     a verb the vocabulary adds is then a compile error here, not a raw name on the screen. */
@@ -329,6 +374,8 @@ const closePeek = (restore = false) => {
 
 	opened = null;
 	peek.hidden = true;
+	peekDetails.hidden = true;
+	peekDetailRows.replaceChildren();	// so reopening never flashes the last record's rows
 	dropPickers();
 
 	if (restore && was) route.mark(here());
@@ -355,12 +402,15 @@ const fillPeek = () => {
 	peekActions.hidden = !writes && !removes;
 	disarmDelete();
 	syncPeekActions();
+	fillDetails();
 };
 
-/** Updates the shown row after a grid redraw, unless there are unsaved edits or this isn't
-    the record showing (a draft never matches — it has no key). */
-const refreshPeek = (row: Row) => {
-	if (!opened?.key.length || !same(opened.key, key(opened.t, row))) return;
+/** Updates the shown row after a sheet redraw, unless there are unsaved edits or this isn't
+    the record showing (a draft never matches — it has no key).
+    The table is asked first: a detail row carries its master's key columns, so keys alone would
+    let a subtable's row pass for the very record the panel is showing. */
+const refreshPeek = (t: TableMeta, row: Row) => {
+	if (opened?.t !== t || !opened.key.length || !same(opened.key, key(t, row))) return;
 
 	opened.row = row;
 	if (!peekFields.querySelector('input.dirty')) fillPeek();
@@ -459,8 +509,9 @@ async function removePeek(): Promise<void> {
 	}
 }
 
-/** A record already in the grid — its pk addresses it, so the pk is read-only here too. */
-const record = (t: TableMeta, row: Row, button: HTMLButtonElement): Peeked => {
+/** A record already drawn on a sheet — its pk addresses it, so the pk is read-only here too. */
+const record = (s: Sheet, row: Row, button: HTMLButtonElement): Peeked => {
+	const { t } = s;
 	const id = key(t, row);
 
 	return {
@@ -478,10 +529,10 @@ const record = (t: TableMeta, row: Row, button: HTMLButtonElement): Peeked => {
 			Object.assign(row, saved);		// keep what the server returned, not the typed text
 
 			const tr = button.closest('tr');
-			if (tr?.isConnected) fill(tr, t, row);
+			if (tr?.isConnected) fill(tr, s, row);
 
 			fillPeek();
-			say(summary(t));
+			say(summary(s));
 		},
 		remove: async () => {
 			await api<void>(rowPath(t, row), sending('DELETE'));
@@ -534,6 +585,121 @@ const saveAs = (f: FormatMeta): Action => ({
 });
 
 
+// --- Subtables (SCOPE 6a) ---
+
+/** The subtables of the record the panel is showing, and which one its tab strip has open. */
+let subtables: Detail[] = [];
+let subtable: Detail | null = null;
+let tabs: HTMLButtonElement[] = [];
+
+/** Built in `main`, like the toolbar's own menus. */
+let details!: ActionMenu;
+
+const detailSheet = (sub: Detail): Sheet => ({
+	t: sub.table,
+	head: peekDetailHead,
+	body: peekDetailRows,
+	table: peekDetailGrid,
+	empty: peekDetailEmpty,
+	leastRows: 3,				// enough that a detail with one row still reads as a table
+	handle: row => jump(sub.table, row),
+});
+
+/** What a subtable's rows are asked for: the master's key, written in the columns of the fk that
+    carries it — the same mapping picking from that fk's list writes. So a subtable is the
+    detail's own list under a filter, and there is no second way to address one. */
+const under = (sub: Detail, master: Row) =>
+	filterQuery(Object.entries(valuesFrom(sub.ref, master))
+		.map(([column, value]) => ({ column, op: defaultOp, value })));
+
+/** Draws the open tab's rows. Both the record and the tab are asked again once the answer is
+    back, so a tab switched while one was in flight is not drawn over by the older answer. */
+async function loadDetail(): Promise<void> {
+	const master = opened, sub = subtable;
+
+	if (!master || !sub) return;
+
+	peekDetailHead.replaceChildren();
+	peekDetailRows.replaceChildren();
+	peekDetailGrid.hidden = true;
+	peekDetailEmpty.hidden = true;
+
+	const data = await api<Row[]>(listPath(sub.table.entity, under(sub, master.row)));
+
+	if (opened !== master || subtable !== sub) return;
+
+	renderSheet(detailSheet(sub), data);
+}
+
+/** Opens one tab: marks it, points the insert menu at the table it now offers, and loads it. */
+const openTab = (at: number) => {
+	subtable = subtables[at] ?? null;
+	tabs.forEach((button, i) => button.setAttribute('aria-selected', String(i === at)));
+
+	if (!subtable) return;
+
+	details.reset(subtable.table);
+	void loadDetail().catch(failSoftly);
+};
+
+const tab = (sub: Detail, at: number) => {
+	const button = el('button', sub.table.entity);
+
+	button.type = 'button';
+	button.setAttribute('role', 'tab');
+	button.addEventListener('click', () => openTab(at));
+
+	return button;
+};
+
+/** The panel's tab strip, rebuilt with the panel. A draft has no tabs: nothing can belong to a
+    row that has not been saved. Neither has a table nothing is a detail of — `cliente` is
+    pointed at twice and gets none, because neither fk lies inside its own table's pk.
+    The strip stays on the same fk while that fk is still offered, so stepping through the
+    records of a screen does not send it back to the first tab. */
+const fillDetails = () => {
+	subtables = opened?.key.length ? detailsOf(tables, opened.t) : [];
+	tabs = subtables.map(tab);
+
+	peekDetails.hidden = subtables.length === 0;
+	peekTabs.replaceChildren(...tabs);
+
+	const at = subtables.findIndex(one => one.ref === subtable?.ref);
+
+	openTab(at < 0 ? 0 : at);
+};
+
+/** A row being inserted into the open subtable. The columns the master fixes are written already
+    and are not writable — the fk *is* the master's key, seen from the detail — and they go in
+    the POST whether or not they were typed. Saving comes back to the master, and drawing it
+    lists the new row into the tab. */
+const detailDraft = (sub: Detail, master: Peeked, from: HTMLElement): Peeked => {
+	const inherited = valuesFrom(sub.ref, master.row);
+	const base = draft(sub.table, from);
+
+	return {
+		...base,
+		row: { ...base.row, ...inherited },
+		title: `Nuevo registro de ${master.title}`,
+		writable: c => !sub.ref.columns.includes(c.name),
+		save: async typed => {
+			await api<Row>(`/api/${encodeURIComponent(sub.table.entity)}`,
+				sending('POST', { ...inherited, ...typed }));
+
+			route.go(here(master.key));	// back to the master; drawing it lists the new row in
+		},
+	};
+};
+
+/** The one action a tab offers. `details.reset` has already hidden it unless the role may insert
+    into the table the open tab is showing. */
+const insertDetailRow: Action = {
+	text: 'Insertar fila',
+	needs: 'create',
+	run: () => { if (opened && subtable) show(detailDraft(subtable, opened, details.button)); },
+};
+
+
 // --- Editing ---
 
 /** The cell being edited — one at a time, so opening another can call it off. */
@@ -541,11 +707,12 @@ let editing: { td: HTMLTableCellElement; cancel: () => void } | null = null;
 
 /** A cell opens into one text box for every type — no per-type widget needed. Empty is `null`;
     an fk column gets the same box plus a list beside it, see `picker.ts`. */
-function edit(t: TableMeta, row: Row, c: ColumnMeta, td: HTMLTableCellElement): void {
+function edit(s: Sheet, row: Row, c: ColumnMeta, td: HTMLTableCellElement): void {
 	if (editing?.td === td) return;			// a double-click *inside* the open editor selects a word
 
 	editing?.cancel();
 
+	const { t } = s;
 	const tr = td.closest('tr');
 	const before = row[c.name] === null ? '' : String(row[c.name]);
 	const input = el('input');
@@ -565,7 +732,7 @@ function edit(t: TableMeta, row: Row, c: ColumnMeta, td: HTMLTableCellElement): 
 		editing = null;
 		list?.destroy();
 
-		if (tr?.isConnected) fill(tr, t, row);
+		if (tr?.isConnected) fill(tr, s, row);
 	};
 
 	/** @param written what to send: the single typed column by default, or every column of a
@@ -590,10 +757,10 @@ function edit(t: TableMeta, row: Row, c: ColumnMeta, td: HTMLTableCellElement): 
 			editing = null;
 			list?.destroy();
 
-			if (tr?.isConnected) fill(tr, t, row);
+			if (tr?.isConnected) fill(tr, s, row);
 
-			refreshPeek(row);
-			say(summary(t));
+			refreshPeek(t, row);
+			say(summary(s));
 		} catch (err) {
 			if (sessionEnded(err)) { location.reload(); return; }
 
@@ -644,6 +811,7 @@ let tables: TableMeta[] = [];
 let screen: TableMeta | null = null;
 
 /** Built in `main`, once `_meta` has answered. */
+let defaultOp!: string;
 let filters!: FilterBar;
 let inserts!: ActionMenu;
 let exports!: ActionMenu;
@@ -653,27 +821,39 @@ let route!: Router;
 const here = (record: string[] = []): View =>
 	({ screen: screen?.entity ?? '', key: record, conditions: filters.conditions() });
 
+/** The screen's own grid. It is named inside its own handle, so a row opened from it knows
+    which sheet it came off. */
+const gridSheet = (t: TableMeta): Sheet => {
+	const s: Sheet = {
+		t, head: gridHead, body: gridRows, table: grid, empty: emptyNote,
+		leastRows: 0,			// the screen is as long as the list; nothing is held open for it
+		handle: row => opener(s, row),
+	};
+
+	return s;
+};
+
 /** Fetches rows for the screen, under whatever filter the bar currently holds. */
-async function load(t: TableMeta): Promise<Row[]> {
+async function load(s: Sheet): Promise<Row[]> {
 	blank();
 	say('Cargando…', 'busy');
 
-	const data = await api<Row[]>(listPath(t.entity, filters.query()));
+	const data = await api<Row[]>(listPath(s.t.entity, filters.query()));
 
-	renderGrid(t, data);
-	say(summary(t));
+	renderSheet(s, data);
+	say(summary(s));
 
 	return data;
 }
 
 /** Opens the record the address names, if the grid drew it. */
-const reopen = (t: TableMeta, wanted: string[], data: Row[]): boolean => {
-	const i = data.findIndex(row => same(key(t, row), wanted));
-	const button = gridRows.children[i]?.querySelector('button');
+const reopen = (s: Sheet, wanted: string[], data: Row[]): boolean => {
+	const i = data.findIndex(row => same(key(s.t, row), wanted));
+	const button = s.body.children[i]?.querySelector('button');
 
 	if (!(button instanceof HTMLButtonElement)) return false;
 
-	show(record(t, data[i], button));
+	show(record(s, data[i], button));
 
 	return true;
 };
@@ -695,16 +875,17 @@ async function draw(): Promise<void> {
 	inserts.reset(t);
 	exports.reset(t);
 
-	const data = await load(t);
+	const s = gridSheet(t);
+	const data = await load(s);
 
 	// report anything the address asked for that wasn't found, rather than dropping it silently
 	const notes = [
 		...unresolved.map(name => `filtro ignorado: ${name}`),
-		...(view.key.length && !reopen(t, view.key, data)
+		...(view.key.length && !reopen(s, view.key, data)
 			? [`el registro ${view.key.join(' · ')} no está en la lista`] : []),
 	];
 
-	if (notes.length) say(`${summary(t)} · ${notes.join(' · ')}`, 'error');
+	if (notes.length) say(`${summary(s)} · ${notes.join(' · ')}`, 'error');
 }
 
 const fail = (err: Error) => {
@@ -745,14 +926,17 @@ async function main(): Promise<void> {
 
 	if (!tables.length) { say('No hay entidades disponibles para este usuario.'); return; }
 
+	defaultOp = meta.defaultOperator;
 	filters = filterBar(meta.operators, refilter);
 	inserts = actionMenu('Insertar', [insertRow]);
 	exports = actionMenu('Exportar', meta.formats.map(saveAs), { className: 'exports', iconOnly: true });
+	details = actionMenu('Insertar fila', [insertDetailRow], { className: 'tab-insert', iconOnly: true });
 	route = router(meta);
 
 	nav.replaceChildren(...tables.map(link));
 	toolbar.append(filters.element, inserts.element);
 	headerEnd.append(exports.element);
+	peekTabbar.append(details.element);	// outside the tabs' scroll box, so its list can escape it
 	peekClose.addEventListener('click', dismissPeek);
 	peekForm.addEventListener('submit', e => { e.preventDefault(); void savePeek(); });
 	peekCancel.addEventListener('click', cancelPeek);

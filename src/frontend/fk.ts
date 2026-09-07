@@ -10,6 +10,18 @@ type Row = Record<string, unknown>;
 export const referencesOf = (t: TableMeta): ReadonlyMap<string, ReferenceMeta> =>
 	new Map(t.references.flatMap(r => r.columns.map(name => [name, r] as const)));
 
+/** A table that is a detail of some master, together with the fk that makes it one. */
+export interface Detail {
+	table: TableMeta;
+	ref: ReferenceMeta;
+}
+
+/** A detail table and its associated foreign key. */
+export const detailsOf = (tables: TableMeta[], master: TableMeta): Detail[] =>
+	tables.flatMap(table => table.references
+		.filter(ref => ref.isDetail && ref.to === master.entity)
+		.map(ref => ({ table, ref })));
+
 /** The fk's target table. Missing only if `_meta` and the screen disagree. */
 export const targetOf = (tables: TableMeta[], r: ReferenceMeta): TableMeta | undefined =>
 	tables.find(t => t.entity === r.to);

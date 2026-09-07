@@ -62,6 +62,23 @@
 			<button id="peek-save" type="submit">Guardar</button>
 		</footer>
 	</form>
+
+	<!-- The record's subtables: one tab per entity that is a detail of it -->
+	<section id="peek-details" hidden aria-labelledby="peek-details-title">
+		<h3 id="peek-details-title">Detalles</h3>
+		<!-- the tabs scroll sideways; the insert button sits outside that box, so its list,
+		     which would be clipped to the strip's own height in there, is not -->
+		<div id="peek-tabbar">
+			<div id="peek-tabs" role="tablist" aria-labelledby="peek-details-title"></div>
+		</div>
+		<div id="peek-detail" class="sheet" role="tabpanel">
+			<table id="peek-detail-grid" hidden>
+				<thead><tr id="peek-detail-head"></tr></thead>
+				<tbody id="peek-detail-rows"></tbody>
+			</table>
+			<p id="peek-detail-empty" hidden>Sin registros.</p>
+		</div>
+	</section>
 </section>
 
 <!-- Login screen -->

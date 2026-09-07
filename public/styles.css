@@ -290,13 +290,15 @@ main > header {
 
 /* It reuses the toolbar's action menu whole, so only its shape is said here: the header's round,
    quiet button rather than the band's filled one. Reading a screen is not doing something to it,
-   and the header is where a screen is read — the accent stays on the band below, with writing. */
-.exports {
+   and the header is where a screen is read — the accent stays on the band below, with writing.
+   The panel's tab strip borrows the same shape for the same reason — it sits in furniture, not
+   on the band — so the shape is written once and only the mark differs. */
+:is(.exports, .tab-insert) {
 	align-items: center;
 	padding: 0;
 }
 
-.exports button {
+:is(.exports, .tab-insert) button {
 	justify-content: center;
 	width: 1.75rem;
 	height: 1.75rem;
@@ -314,8 +316,8 @@ main > header {
 	mask: var(--icon-export) center / contain no-repeat;
 }
 /* Its own hover, not the fill's brightness step: there is no fill here to brighten. */
-.exports button:hover,
-.exports button[aria-expanded="true"] {
+:is(.exports, .tab-insert) button:hover,
+:is(.exports, .tab-insert) button[aria-expanded="true"] {
 	filter: none;
 	border-color: var(--faint);
 	background: var(--hover);
@@ -446,6 +448,7 @@ main > header {
 .filters .menu { left: 2.5rem; }		/* under the box a condition is written in, past the magnifier */
 .actions .menu { right: 1rem; }			/* its right edge on the button's, inside the strip's padding */
 .exports .menu { right: 0; }			/* the same edge, but the header has no strip padding */
+.tab-insert .menu { right: 0; }
 
 .menu li {
 	display: flex;
@@ -552,8 +555,10 @@ a.ref {
 }
 a.ref:hover { color: var(--brand-ink); text-decoration-color: currentColor; }
 
-/* The grid's own leading column: the handle that opens a row, pinned so it survives a
-   sideways scroll. It holds no data, so it stays empty until the row is pointed at. */
+/* A sheet's leading column: the handle that opens a row, pinned so it survives a sideways
+   scroll. It holds no data, so it stays empty until the row is pointed at. The grid's handle is
+   a button (the panel opens where the screen already is), a subtable's is a link (the row is
+   read on its own screen) — one shape, so which one it is never shows. */
 .lead {
 	position: sticky;
 	left: 0;
@@ -566,7 +571,7 @@ a.ref:hover { color: var(--brand-ink); text-decoration-color: currentColor; }
 th.lead { z-index: 3; }				/* the corner cell outranks both sticky axes */
 td.lead { z-index: 1; }
 
-.lead button {
+.lead :is(button, a) {
 	display: block;
 	width: 100%;
 	height: 1.5rem;
@@ -578,7 +583,7 @@ td.lead { z-index: 1; }
 	opacity: 0;				/* still clickable: only a pointer already on the row can reach it */
 	cursor: pointer;
 }
-.lead button::before {				/* the mark, on its own box, so the focus ring is not masked away */
+.lead :is(button, a)::before {				/* the mark, on its own box, so the focus ring is not masked away */
 	content: "";
 	display: block;
 	height: 100%;
@@ -586,14 +591,14 @@ td.lead { z-index: 1; }
 	-webkit-mask: var(--icon-expand) center / .875rem no-repeat;
 	mask: var(--icon-expand) center / .875rem no-repeat;
 }
-tbody tr:hover .lead button,
-.lead button:focus-visible,
-tr.open .lead button { opacity: 1; }
-.lead button:hover { color: var(--ink); }
+tbody tr:hover .lead :is(button, a),
+.lead :is(button, a):focus-visible,
+tr.open .lead :is(button, a) { opacity: 1; }
+.lead :is(button, a):hover { color: var(--ink); }
 
 /* The open row is marked on its handle alone — the row itself never changes colour. */
 tr.open .lead { background: var(--brand-soft); }
-tr.open .lead button { color: var(--brand-ink); }
+tr.open .lead :is(button, a) { color: var(--brand-ink); }
 
 .null { color: var(--faint); font-style: italic; }
 
@@ -633,14 +638,16 @@ td.bad input { outline-color: var(--bad); }		/* refused, and still on screen to 
 /* --- Row peek --- */
 
 /* Fixed, not a third column: the grid keeps its width and its scroll position while a row is
-   being read, and the same panel works on a narrow screen without a second layout. */
+   being read, and the same panel works on a narrow screen without a second layout. Wide enough
+   for a subtable to be a table rather than a list of squeezed columns — the record's own fields
+   never needed the room, its details do. */
 #peek {
 	position: fixed;
 	inset: 0 0 0 auto;
 	z-index: 4;
 	display: flex;
 	flex-direction: column;
-	width: min(24rem, 100%);
+	width: min(34.5rem, 100%);
 	border-left: 1px solid var(--line);
 	background: var(--surface);
 	box-shadow: -1px 0 24px rgb(0 0 0 / .1);
@@ -817,6 +824,97 @@ td.bad input { outline-color: var(--bad); }		/* refused, and still on screen to 
 #peek-save:hover:not(:disabled) { filter: brightness(1.05); }
 
 :is(#peek-cancel, #peek-save):disabled { opacity: .5; cursor: default; }
+
+
+/* --- The record's subtables (SCOPE 6a) --- */
+
+/* Under the record and under its actions, because that is the order the model reads in: this is
+   what belongs to the row above, not another way of writing it. Its height is its content's:
+   what keeps a one-row subtable from reading as a footnote is the three rows the sheet always
+   draws (`leastRows`) and the heading over them, not a share of the panel reserved with empty
+   space under it. It grows with the rows to a little over half, and scrolls past that. */
+#peek-details {
+	display: flex;
+	flex-direction: column;
+	flex: 0 0 auto;			/* never the one that gives way: the field list is what scrolls */
+	min-height: 0;
+	max-height: 60%;
+	border-top: 1px solid var(--line);
+	background: var(--raised);
+}
+#peek-details[hidden] { display: none; }	/* `display: flex` would otherwise outvote the attribute */
+
+/* The section says what it is, in the voice the panel's header already uses for the entity
+   name: this is a region of the record on screen, not a second screen. */
+#peek-details-title {
+	margin: 0;
+	flex: none;
+	padding: .625rem .75rem .25rem;
+	color: var(--faint);
+	font-size: .6875rem;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: .08em;
+}
+
+/* The strip is two boxes, not one: the tabs scroll sideways when there are more than fit, and
+   the insert button sits outside that box. A scrolling box clips what hangs out of it on both
+   axes, so a dropdown opened from inside one would be cut off at the strip's own height. */
+#peek-tabbar {
+	display: flex;
+	align-items: center;
+	gap: .25rem;
+	flex: none;
+	padding: 0 .75rem;
+	border-bottom: 1px solid var(--line);
+}
+
+/* One tab per entity that is a detail of the record. Written flat, in `_meta`'s order, so a
+   detail the schema gains is a tab here without a word of it being said. */
+#peek-tabs {
+	display: flex;
+	align-items: center;
+	gap: .25rem;
+	flex: 1;
+	min-width: 0;			/* a `1fr`-ish track floors at min-content without this, and never scrolls */
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+
+#peek-tabs [role="tab"] {
+	flex: none;
+	padding: .5rem .25rem;
+	border: 0;
+	border-bottom: 2px solid transparent;
+	background: transparent;
+	color: var(--muted);
+	font: inherit;
+	font-size: .75rem;
+	font-weight: 500;
+	white-space: nowrap;
+	cursor: pointer;
+}
+#peek-tabs [role="tab"]:hover { color: var(--ink); }
+
+/* The open one is marked on its own edge, not by a filled chip: the tab is furniture, and the
+   accent on this panel already belongs to Guardar. */
+#peek-tabs [role="tab"][aria-selected="true"] {
+	border-bottom-color: var(--brand);
+	color: var(--ink);
+}
+
+#peek-tabbar .tab-insert { flex: none; }		/* the strip ends flush right; the tabs keep the left */
+
+/* The rows themselves: `.sheet` is the grid's own scroll box, so the subtable scrolls both ways
+   inside the panel and its header stays put — nothing about a table is written twice. */
+#peek-detail { background: var(--surface); }
+
+#peek-detail-empty {
+	margin: 0;
+	padding: .75rem 1rem;
+	color: var(--muted);
+	font-size: .8125rem;
+}
 
 
 /* --- Account: the rail's footer --- */

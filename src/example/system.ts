@@ -101,6 +101,20 @@ const entityDefs = defineEntities({
 			table: 'reserva_linea',
 			access: { admin: CAPABILITIES, recepcion: CAPABILITIES, cocina: ['read'] },
 		}),
+
+		pago: defineEntity({
+			pk: ['fecha', 'id', 'nro'],
+			fields: {
+				fecha: { type: 'date' },
+				id: { type: 'integer' },
+				nro: { type: 'cantidad' },
+				medio: { type: 'nombre', nullable: false, isName: true },
+				importe: { type: 'importe', nullable: false },
+				cobrado_en: { type: 'datetime', nullable: false, defaultValue: { fn: 'now' } },
+			} satisfies RecordDef<typeof typeDefs>,
+			fks: { reserva: { entity: 'ventas.reserva', fields: ['fecha', 'id'] } },
+			access: { admin: CAPABILITIES, recepcion: CAPABILITIES },
+		}),
 	}),
 
 	...inSchema('historico', {

@@ -16,6 +16,7 @@ export interface ReferenceMeta {
 	to: string;			// the target's entity identity, e.g. "ventas.reserva"
 	columns: string[];		// this table's columns, in the order they map
 	targetColumns: string[];	// the target's columns, in the same order
+	isDetail: boolean;
 }
 
 import type { Capability } from 'system-definition';

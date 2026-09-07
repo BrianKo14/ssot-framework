@@ -22,6 +22,7 @@ const referenceMeta = (r: ReferenceInfo): ReferenceMeta => ({
 	to: r.to.entity,
 	columns: r.columns.map(c => c.name),
 	targetColumns: r.targetColumns.map(c => c.name),
+	isDetail: r.isDetail,
 });
 
 /** Everything about a table. Yet unfiltered by access control. */

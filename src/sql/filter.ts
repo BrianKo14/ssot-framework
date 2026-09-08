@@ -70,19 +70,27 @@ export const operatorMeta: OperatorMeta[] = [...byName].map(([name, o]) =>
 
 // --- Reading the query parameter ---
 
-export function parseFilter(raw: unknown): Record<string, unknown> {
-	if (raw === undefined) return {};
-	if (typeof raw !== 'string') throw new HttpError(400, 'filter must be given once');
+/** Parses a query parameter as JSON and validates it.  
+ * E.g. `\users?=filter={"age":30}` -> `jsonParam(req.query.filter, 'filter', 'a JSON object', isObject, {})` = `{ age: 30 }` */
+export function jsonParam<T>(raw: unknown, what: string, shape: string, is: (x: unknown) => x is T,
+	empty: T): T {
+	if (raw === undefined) return empty;
+	if (typeof raw !== 'string') throw new HttpError(400, `${what} must be given once`);
 
 	let parsed: unknown;
 	try { parsed = JSON.parse(raw); }
-	catch { throw new HttpError(400, 'filter is not valid JSON'); }
+	catch { throw new HttpError(400, `${what} is not valid JSON`); }
 
-	if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
-		throw new HttpError(400, 'filter must be a JSON object');
+	if (!is(parsed)) throw new HttpError(400, `${what} must be ${shape}`);
 
-	return parsed as Record<string, unknown>;
+	return parsed;
 }
+
+const isObject = (x: unknown): x is Record<string, unknown> =>
+	x !== null && typeof x === 'object' && !Array.isArray(x);
+
+export const parseFilter = (raw: unknown): Record<string, unknown> =>
+	jsonParam(raw, 'filter', 'a JSON object', isObject, {});
 
 /** Normalize a filter entry into a list of conditions. */
 const asConditions = (name: string, entry: unknown): FilterCondition[] =>
@@ -113,20 +121,24 @@ const bindable = (c: ColumnInfo, o: Operator, value: unknown): Checked => {
 		: { ok: false, error: `${c.name} ${o.symbol} must be text` };
 };
 
-/** Write a filter condition as a SQL fragment. */
-const written = (c: ColumnInfo, o: Operator, value: unknown, params: unknown[]): Written => {
+/** Write a filter condition as a SQL fragment.  
+ * E.g. `written({ name: 'age' }, '"age"', greaterOrEqual, 30, params)` = `{ ok: true, sql: '"age" >= $1' }` */
+const written = (c: ColumnInfo, col: string, o: Operator, value: unknown, params: unknown[]): Written => {
 	const operand = bindable(c, o, value);
 
 	if (!operand.ok) return operand;
 
-	const sql = o.sql(q(c.name), operand.value === null ? null : `$${params.push(operand.value)}`);
+	const sql = o.sql(col, operand.value === null ? null : `$${params.push(operand.value)}`);
 
 	return sql === undefined
 		? { ok: false, error: `${c.name} ${o.symbol} ${operand.value === null ? 'needs a value' : 'takes no value'}` }
 		: { ok: true, sql };
 };
 
-export function filterConditions(columns: Columns, raw: Record<string, unknown>, params: unknown[]): string[] {
+/** @param at how a column is written; by name alone, unless the query names more than one
+ * table and a bare name would be ambiguous — see `sql/reach.ts`. */
+export function filterConditions(columns: Columns, raw: Record<string, unknown>, params: unknown[],
+	at: (c: ColumnInfo) => string = c => q(c.name)): string[] {
 	const conditions: string[] = [];
 	const errors: string[] = [];
 
@@ -136,7 +148,7 @@ export function filterConditions(columns: Columns, raw: Record<string, unknown>,
 
 			if (!operator) { errors.push(`${c.name}: unknown operator "${op}"`); continue; }
 
-			const one = written(c, operator, value, params);
+			const one = written(c, at(c), operator, value, params);
 
 			if (one.ok) conditions.push(one.sql); else errors.push(one.error);
 		}
@@ -146,10 +158,12 @@ export function filterConditions(columns: Columns, raw: Record<string, unknown>,
 	return conditions;
 }
 
-/** How a request addresses rows by value alone: a row's own pk, and an inherited master key. */
-export const equalities = (values: Record<string, unknown>, params: unknown[]): string[] =>
+/** How a request addresses rows by value alone: a row's own pk, and an inherited master key.
+ * @param at how a column is written, see `filterConditions`. E.g. `c => `"orders"."${c.name}"` */
+export const equalities = (values: Record<string, unknown>, params: unknown[],
+	at: (name: string) => string = q): string[] =>
 	Object.entries(values).map(([col, value]) =>
-		equality(q(col), value === null ? null : `$${params.push(value)}`));
+		equality(at(col), value === null ? null : `$${params.push(value)}`));
 
 /** WHERE clause builder */
 export const where = (conds: string[]) => conds.length ? ` where ${conds.join(' and ')}` : '';

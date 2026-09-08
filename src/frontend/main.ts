@@ -1,13 +1,17 @@
 import type { Capability, ColumnMeta, FormatMeta, ReferenceMeta, SystemMeta, TableMeta } from '../shared/api.js';
 import { actionMenu, type Action, type ActionMenu } from './actions.js';
+import { ancestryPicker, type AncestryPicker } from './ancestry.js';
 import { api, ApiError, sending } from './api.js';
 import { authenticated, sessionEnded } from './auth.js';
 import { byId, classed, el } from './dom.js';
 import { download } from './export.js';
 import { filterBar, type FilterBar } from './filters.js';
-import { type Detail, detailsOf, keyThrough, referencesOf, targetOf, valuesFrom, valuesOf } from './fk.js';
+import {
+	type Ancestor, type Detail, detailsOf, keyThrough, kinshipOf, ownColumns, type Reachable,
+	reachedColumn, reachedName, referencesOf, targetOf, valuesFrom, valuesOf,
+} from './fk.js';
 import { picker, type Picker } from './picker.js';
-import { filterQuery, listPath } from './query.js';
+import { filterQuery, type Listing, listPath, rowPath } from './query.js';
 import { router, same, type Router, type View } from './route.js';
 
 type Row = Record<string, unknown>;
@@ -76,9 +80,8 @@ const fkOf = (t: TableMeta, c: ColumnMeta): Fk | undefined => {
 /** A row's pk values, in declaration order. */
 const key = (t: TableMeta, row: Row) => valuesOf(t.pk, row);
 
-/** The `/:pk0[/:pk1…]` route `crudRouter` mounts. */
-const rowPath = (t: TableMeta, row: Row) =>
-	[`/api/${encodeURIComponent(t.entity)}`, ...key(t, row).map(encodeURIComponent)].join('/');
+/** Where a row of `t` is read and written: `rowPath` addressed by the row's own key. */
+const rowAt = (t: TableMeta, row: Row, listing?: Listing) => rowPath(t.entity, key(t, row), listing);
 
 
 // --- Rendering ---
@@ -132,7 +135,25 @@ const fkLink = (fk: Fk, row: Row, value: unknown): HTMLAnchorElement | undefined
 	return a;
 };
 
-const header = (t: TableMeta) => (c: ColumnMeta) => named(el('th', c.name, el('small', c.type)), t, c, !c.nullable);
+/** What has to be asked of the server beside the table's own columns, for these to be drawn. */
+const reached = (columns: Reachable[]) => columns.filter(sh => sh.via.length > 0).map(sh => sh.name);
+
+/** The header cell. An own column carries its table's marks; a borrowed one carries where it
+    came from instead — an FK badge over a value that links nowhere, or a "required" over a
+    column a left join can leave null, would each be saying something untrue about it. */
+const header = (t: TableMeta) => (sh: Reachable) => {
+	const { column } = sh;
+
+	if (!sh.via.length)
+		return named(el('th', column.name, el('small', column.type)), t, column, !column.nullable);
+
+	const th = classed('th', 'borrowed', column.name,
+		el('small', `${kinshipOf(sh.via)} · ${sh.owner.entity}`));
+
+	th.title = `${sh.name} — ${column.type}, de ${sh.owner.entity}`;
+
+	return th;
+};
 
 /** Shared by the grid's cell and the peek's field, so the two can't disagree on what's editable. */
 const writable = (t: TableMeta, c: ColumnMeta) => !t.pk.includes(c.name) && t.capabilities.includes('update');
@@ -142,6 +163,8 @@ const writable = (t: TableMeta, c: ColumnMeta) => !t.pk.includes(c.name) && t.ca
     differ — so neither can end up reading its own way. */
 interface Sheet {
 	t: TableMeta;
+	/** The columns it draws, in order: the table's own, then whatever it borrows. */
+	columns: Reachable[];
 	head: HTMLElement;
 	body: HTMLElement;
 	table: HTMLElement;
@@ -153,14 +176,20 @@ interface Sheet {
 	handle(row: Row): Node;
 }
 
-const cell = (s: Sheet, row: Row) => (c: ColumnMeta) => {
-	const fk = fkOf(s.t, c);
-	const td = shown('td', row[c.name], fk && fkLink(fk, row, row[c.name]));
+/** A borrowed cell is read-only and links nowhere: the row it came off is not on the wire, only
+    that one value of it, so there is neither a row to address nor a row to write back to. */
+const cell = (s: Sheet, row: Row) => (sh: Reachable) => {
+	const { column } = sh;
+	const value = row[sh.name] ?? null;			// a column the answer did not carry reads as null
+	const fk = sh.via.length ? undefined : fkOf(s.t, column);
+	const td = shown('td', value, fk && fkLink(fk, row, value));
 
-	if (!writable(s.t, c)) return td;
+	if (sh.via.length) { td.classList.add('borrowed'); return td; }
+
+	if (!writable(s.t, column)) return td;
 
 	td.classList.add('editable');
-	td.addEventListener('dblclick', () => edit(s, row, c, td));
+	td.addEventListener('dblclick', () => edit(s, row, column, td));
 
 	return td;
 };
@@ -281,7 +310,7 @@ const jump = (t: TableMeta, row: Row) => {
 /** The one place a row's cells are written. Keeps the lead cell rather than rebuilding it,
     so the peek's reference to its button (which marks the row open) survives. */
 const fill = (tr: HTMLTableRowElement, s: Sheet, row: Row) => {
-	tr.replaceChildren(tr.querySelector('.lead') ?? lead('td', s.handle(row)), ...s.t.columns.map(cell(s, row)));
+	tr.replaceChildren(tr.querySelector('.lead') ?? lead('td', s.handle(row)), ...s.columns.map(cell(s, row)));
 
 	return tr;
 };
@@ -291,10 +320,10 @@ const fill = (tr: HTMLTableRowElement, s: Sheet, row: Row) => {
     cell — and `summary` does not count them, because they are not records. */
 const blanks = (s: Sheet, drawn: number) =>
 	Array.from({ length: Math.max(0, s.leastRows - drawn) },
-		() => classed('tr', 'blank', lead('td'), ...s.t.columns.map(() => el('td'))));
+		() => classed('tr', 'blank', lead('td'), ...s.columns.map(() => el('td'))));
 
 const renderSheet = (s: Sheet, data: Row[]) => {
-	s.head.replaceChildren(lead('th'), ...s.t.columns.map(header(s.t)));
+	s.head.replaceChildren(lead('th'), ...s.columns.map(header(s.t)));
 	s.body.replaceChildren(...data.map(row => fill(el('tr'), s, row)), ...blanks(s, data.length));
 
 	s.table.hidden = false;			// show header even with no rows under it
@@ -308,7 +337,7 @@ const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? on
     it drew to look like a table are not among them. */
 const summary = (s: Sheet) =>
 	`${count(s.body.querySelectorAll('tr:not(.blank)').length, 'registro')}`
-	+ ` · ${count(s.t.columns.length, 'campo')}`;
+	+ ` · ${count(s.columns.length, 'campo')}`;
 
 /** What each capability is called on screen. `Record<Capability, …>` rather than a loose map:
     a verb the vocabulary adds is then a compile error here, not a raw name on the screen. */
@@ -524,9 +553,7 @@ const record = (s: Sheet, row: Row, button: HTMLButtonElement): Peeked => {
 		required: c => !c.nullable,		// a default fills what an insert omits, not what an update blanks
 		landing: () => peekClose,
 		save: async typed => {
-			const saved = await api<Row>(rowPath(t, row), sending('PATCH', typed));
-
-			Object.assign(row, saved);		// keep what the server returned, not the typed text
+			await patched(s, row, typed);
 
 			const tr = button.closest('tr');
 			if (tr?.isConnected) fill(tr, s, row);
@@ -535,7 +562,7 @@ const record = (s: Sheet, row: Row, button: HTMLButtonElement): Peeked => {
 			say(summary(s));
 		},
 		remove: async () => {
-			await api<void>(rowPath(t, row), sending('DELETE'));
+			await api<void>(rowAt(t, row), sending('DELETE'));
 
 			// back to the list; drawing it again is what stops the address naming a gone row
 			closePeek();
@@ -543,6 +570,22 @@ const record = (s: Sheet, row: Row, button: HTMLButtonElement): Peeked => {
 		},
 	};
 };
+
+/** What a row is after a write: what the server answered, and — when the sheet is drawing
+    columns borrowed from an ancestor — that same row read again with them. Writing an fk moves
+    the row under a different ancestor, so what was borrowed beside it is the old one's until it
+    is asked for again. That second read is the `GET` of a record with reached columns (7a).
+    The one place a written row is put back, so a cell edit and the panel cannot disagree. */
+async function patched(s: Sheet, row: Row, body: Row): Promise<void> {
+	const { t } = s;
+	const saved = await api<Row>(rowAt(t, row), sending('PATCH', body));
+
+	Object.assign(row, saved);			// keep what the server returned, not the typed text
+
+	const borrowing = reached(s.columns);
+
+	if (borrowing.length) Object.assign(row, await api<Row>(rowAt(t, row, { reached: borrowing })));
+}
 
 /** A new row being inserted. Every column is writable, pk included, and it all goes in one
     POST to the entity's collection. */
@@ -566,11 +609,39 @@ const draft = (t: TableMeta, from: HTMLElement): Peeked => ({
 	},
 });
 
-/** The one action the toolbar offers so far. */
+/** What the toolbar's menu does when the role may insert. */
 const insertRow: Action = {
 	text: 'Insertar fila',
 	needs: 'create',
 	run: t => show(draft(t, inserts.button)),
+};
+
+// --- Ancestor columns (SCOPE 6b) ---
+
+/** What each screen is borrowing from its ancestors. Not in the address and not stored: it is a
+    way of looking at a list, not a setting the list has, so it lasts exactly as long as the page
+    does. Keyed by the table, so stepping to another screen and back finds it still there. */
+const borrowed = new Map<TableMeta, Reachable[]>();
+
+const showing = (t: TableMeta) => borrowed.get(t) ?? [];
+
+/** Adds or drops one ancestor column and redraws: the column has to be asked of the server, and
+    every move on this screen goes through the address. The open record comes along — adding a
+    column, unlike changing a filter, can never leave it out of the list. */
+const borrow = (t: TableMeta, a: Ancestor, c: ColumnMeta, on: boolean) => {
+	const name = reachedName(a, c);
+	const kept = showing(t).filter(sh => sh.name !== name);
+
+	borrowed.set(t, on ? [...kept, reachedColumn(a, c)] : kept);
+	route.go(here(opened?.key ?? []));
+};
+
+/** The one way in: it opens on the screen showing, and what it offers is what `_meta` says that
+    screen points at — so a role that cannot read a table is never offered its fields. */
+const ancestorField: Action = {
+	text: 'Campo ancestro',
+	needs: 'read',
+	run: t => ancestry.open(t, showing(t).map(sh => sh.name)),
 };
 
 /** Taking the list away as a file — one action per format `_meta` publishes, so a format the
@@ -580,8 +651,9 @@ const insertRow: Action = {
 const saveAs = (f: FormatMeta): Action => ({
 	text: f.label,
 	needs: 'read',
-	run: t => void download(listPath(t.entity, filters.query(), f.name), `${t.entity}.${f.extension}`)
-		.catch(failSoftly),
+	run: t => void download(
+		listPath(t.entity, { filter: filters.query(), format: f.name, reached: reached(showing(t)) }),
+		`${t.entity}.${f.extension}`).catch(failSoftly),
 });
 
 
@@ -597,6 +669,8 @@ let details!: ActionMenu;
 
 const detailSheet = (sub: Detail): Sheet => ({
 	t: sub.table,
+	columns: ownColumns(sub.table),		// ancestor columns belong to a screen, not to a table
+
 	head: peekDetailHead,
 	body: peekDetailRows,
 	table: peekDetailGrid,
@@ -624,7 +698,7 @@ async function loadDetail(): Promise<void> {
 	peekDetailGrid.hidden = true;
 	peekDetailEmpty.hidden = true;
 
-	const data = await api<Row[]>(listPath(sub.table.entity, under(sub, master.row)));
+	const data = await api<Row[]>(listPath(sub.table.entity, { filter: under(sub, master.row) }));
 
 	if (opened !== master || subtable !== sub) return;
 
@@ -751,9 +825,8 @@ function edit(s: Sheet, row: Row, c: ColumnMeta, td: HTMLTableCellElement): void
 		say('Guardando…', 'busy');
 
 		try {
-			const saved = await api<Row>(rowPath(t, row), sending('PATCH', body));
+			await patched(s, row, body);
 
-			Object.assign(row, saved);		// keep what the server returned, not the typed text
 			editing = null;
 			list?.destroy();
 
@@ -815,6 +888,7 @@ let defaultOp!: string;
 let filters!: FilterBar;
 let inserts!: ActionMenu;
 let exports!: ActionMenu;
+let ancestry!: AncestryPicker;
 let route!: Router;
 
 /** The address for what is on screen now, assembled from the screen and the bar themselves. */
@@ -825,7 +899,8 @@ const here = (record: string[] = []): View =>
     which sheet it came off. */
 const gridSheet = (t: TableMeta): Sheet => {
 	const s: Sheet = {
-		t, head: gridHead, body: gridRows, table: grid, empty: emptyNote,
+		t, columns: [...ownColumns(t), ...showing(t)],
+		head: gridHead, body: gridRows, table: grid, empty: emptyNote,
 		leastRows: 0,			// the screen is as long as the list; nothing is held open for it
 		handle: row => opener(s, row),
 	};
@@ -838,7 +913,8 @@ async function load(s: Sheet): Promise<Row[]> {
 	blank();
 	say('Cargando…', 'busy');
 
-	const data = await api<Row[]>(listPath(s.t.entity, filters.query()));
+	const data = await api<Row[]>(
+		listPath(s.t.entity, { filter: filters.query(), reached: reached(s.columns) }));
 
 	renderSheet(s, data);
 	say(summary(s));
@@ -927,10 +1003,11 @@ async function main(): Promise<void> {
 	if (!tables.length) { say('No hay entidades disponibles para este usuario.'); return; }
 
 	defaultOp = meta.defaultOperator;
-	filters = filterBar(meta.operators, refilter);
-	inserts = actionMenu('Insertar', [insertRow]);
+	filters = filterBar(tables, meta.operators, refilter);
+	inserts = actionMenu('Insertar', [insertRow, ancestorField]);
 	exports = actionMenu('Exportar', meta.formats.map(saveAs), { className: 'exports', iconOnly: true });
 	details = actionMenu('Insertar fila', [insertDetailRow], { className: 'tab-insert', iconOnly: true });
+	ancestry = ancestryPicker(tables, borrow);
 	route = router(meta);
 
 	nav.replaceChildren(...tables.map(link));

@@ -15,8 +15,10 @@ export const tableRef = (t: TableInfo) => qualified(t.schema, t.table);
 /** List of names -> comma-separated string of quoted identifiers for SQL. */
 export const nameList = (names: string[]) => names.map(q).join(', ');
 
-/** List of columns -> comma-separated string for SQL. */
-export const columnList = (cols: ColumnInfo[]) => nameList(cols.map(c => c.name));
+/** List of columns -> comma-separated string for SQL.
+ * @param at column context, for use in joins. E.g. `c => `"orders"."${c.name}"` */
+export const columnList = (cols: ColumnInfo[], at: (c: ColumnInfo) => string = c => q(c.name)) =>
+	cols.map(at).join(', ');
 
 
 // --- Types ---

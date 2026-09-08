@@ -66,8 +66,6 @@
 	<!-- The record's subtables: one tab per entity that is a detail of it -->
 	<section id="peek-details" hidden aria-labelledby="peek-details-title">
 		<h3 id="peek-details-title">Detalles</h3>
-		<!-- the tabs scroll sideways; the insert button sits outside that box, so its list,
-		     which would be clipped to the strip's own height in there, is not -->
 		<div id="peek-tabbar">
 			<div id="peek-tabs" role="tablist" aria-labelledby="peek-details-title"></div>
 		</div>
@@ -80,6 +78,16 @@
 		</div>
 	</section>
 </section>
+
+<!-- Fields borrowed from the tables this one points at -->
+<dialog id="ancestry" aria-labelledby="ancestry-title">
+	<header>
+		<h2 id="ancestry-title">Campos de tablas ancestro</h2>
+		<button id="ancestry-close" type="button" title="Cerrar" aria-label="Cerrar"></button>
+	</header>
+	<div id="ancestry-groups"></div>
+	<p id="ancestry-none" hidden>Esta entidad no apunta a ninguna otra.</p>
+</dialog>
 
 <!-- Login screen -->
 <section id="login" data-state="checking" aria-labelledby="login-title">

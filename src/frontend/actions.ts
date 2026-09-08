@@ -34,7 +34,7 @@ export interface Look {
  * @param look how it is drawn; written on the button by default
  */
 export function actionMenu(label: string, actions: Action[], look: Look = {}): ActionMenu {
-	const button = el('button', ...(look.iconOnly ? [] : [label]));
+	const button = el('button');
 	const element = classed('div', 'actions', button);
 	const list = menu(button, element);
 
@@ -42,17 +42,27 @@ export function actionMenu(label: string, actions: Action[], look: Look = {}): A
 
 	if (look.className) element.classList.add(look.className);
 
-	if (look.iconOnly) {					// nothing is written on it, so it says its own name
-		button.title = label;
-		button.setAttribute('aria-label', label);
-	}
-
 	element.append(list.element);
 	element.hidden = true;					// until a screen says what it allows
 	button.type = 'button';
 	button.setAttribute('aria-haspopup', 'listbox');
 
 	const allowed = (t: TableMeta) => actions.filter(a => t.capabilities.includes(a.needs));
+
+	/** What the button is called. A menu offering one thing is named by that thing; a menu
+	    offering several, by what they have in common. So a role allowed only some of them is
+	    never handed a button promising the rest — the label follows the list, as the list
+	    already follows the role. */
+	const call = (offered: Action[]) => {
+		const name = offered.length === 1 ? offered[0].text : label;
+
+		if (look.iconOnly) {				// nothing is written on it, so it says its own name
+			button.title = name;
+			button.setAttribute('aria-label', name);
+		} else button.replaceChildren(name);
+	};
+
+	call(actions);						// until a screen says which of them it allows
 
 	const line = (t: TableMeta) => (a: Action): Option =>
 		({ text: a.text, pick: () => { list.close(); a.run(t); } });
@@ -73,10 +83,13 @@ export function actionMenu(label: string, actions: Action[], look: Look = {}): A
 	button.addEventListener('keydown', e => keys.get(e.key)?.(e));
 
 	const reset = (t: TableMeta) => {
+		const offered = allowed(t);
+
 		table = t;
 
 		list.close();					// what it was offering was the last screen's
-		element.hidden = allowed(t).length === 0;
+		call(offered);
+		element.hidden = offered.length === 0;
 	};
 
 	return { element, button, reset };

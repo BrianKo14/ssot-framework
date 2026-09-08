@@ -1,11 +1,14 @@
 // The address bar (URL grammar)
 
-import type { ColumnMeta, OperatorMeta, SystemMeta, TableMeta } from '../shared/api.js';
+import type { OperatorMeta, SystemMeta, TableMeta } from '../shared/api.js';
+import { type Reachable, reachableFrom } from './fk.js';
 
 
-/** One committed filter condition. */
+/** One committed filter condition. The column may be one of an ancestor's (SCOPE 6b): what a
+ * screen can *name* is derived from `_meta`, so the address resolves one without being told
+ * which columns the grid happens to be showing. */
 export interface Condition {
-	column: ColumnMeta;
+	column: Reachable;
 	operator: OperatorMeta;
 	value: string | null;
 }
@@ -53,8 +56,11 @@ export function router(meta: SystemMeta): Router {
 	const operator = (name: string) => meta.operators.find(o => o.name === name);
 	const fallback = operator(meta.defaultOperator);
 
-	const condition = (t: TableMeta, key: string, raw: string): Condition | undefined => {
-		const whole = t.columns.find(c => c.name === key);
+	/** Whole name first, then split at the last `.`, so neither a column named `a.b` nor a path
+	    through an fk called `a` is made unreachable by the other. The namespace is wider than
+	    the table now — it holds what the table points at — but the reading is the same. */
+	const condition = (named: Reachable[], key: string, raw: string): Condition | undefined => {
+		const whole = named.find(c => c.name === key);
 
 		if (whole && fallback) return { column: whole, operator: fallback, value: operand(fallback, raw) };
 
@@ -62,7 +68,7 @@ export function router(meta: SystemMeta): Router {
 
 		if (cut < 0) return undefined;
 
-		const column = t.columns.find(c => c.name === key.slice(0, cut));
+		const column = named.find(c => c.name === key.slice(0, cut));
 		const asked = operator(key.slice(cut + 1));
 
 		return column && asked ? { column, operator: asked, value: operand(asked, raw) } : undefined;
@@ -74,18 +80,22 @@ export function router(meta: SystemMeta): Router {
 		const conditions: Condition[] = [];
 		const unresolved: string[] = [];
 
-		if (t)
+		if (t) {
+			const named = reachableFrom(meta.tables, t);
+
 			for (const [name, raw] of new URLSearchParams(location.search)) {
-				const one = condition(t, name, raw);
+				const one = condition(named, name, raw);
 
 				if (one) conditions.push(one); else unresolved.push(name);
 			}
+		}
 
 		return { view: { screen, key, conditions }, unresolved };
 	};
 
 	const named = (c: Condition) =>
 		c.operator.name === meta.defaultOperator ? c.column.name : c.column.name + OP + c.operator.name;
+
 
 	const href = (view: View): string => {
 		const params = new URLSearchParams();

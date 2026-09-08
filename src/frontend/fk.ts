@@ -2,7 +2,7 @@
 // row over there is called, and what picking one writes. Shared by the grid and the row panel,
 // so both stay derived from `_meta` instead of guessing on their own.
 
-import type { ReferenceMeta, TableMeta } from '../shared/api.js';
+import type { ColumnMeta, ReferenceMeta, TableMeta } from '../shared/api.js';
 
 type Row = Record<string, unknown>;
 
@@ -68,3 +68,76 @@ export const valuesFrom = (r: ReferenceMeta, chosen: Row): Row =>
  * that's a single column. `undefined` leaves the list unfiltered. */
 export const searchColumn = (target: TableMeta): string | undefined =>
 	target.columns.find(c => c.isName)?.name ?? (target.pk.length === 1 ? target.pk[0] : undefined);
+
+// --- Ancestry (SCOPE 6b) ---
+
+/** What a table reached by walking fks is called, by how many fks it took to get there. The
+ * list of words *is* how deep the screen goes: it offers what it can name, and no further.
+ * The server's own limit is a separate, looser thing — a guard on what a request may ask,
+ * not a vocabulary — so the two can never disagree. */
+export const KINSHIP = ['padre', 'abuelo'];
+
+/** What separates the steps of a reached column's name — `reserva.cliente.nombre` is `nombre`
+ * of what `cliente` points at, of what `reserva` points at. The server reads the same grammar
+ * (`sql/reach.ts`), the way it already reads the one `filterQuery` writes. */
+const STEP = '.';
+
+/** A table reached from the one on screen, and the fks walked to reach it. */
+export interface Ancestor {
+	via: ReferenceMeta[];
+	table: TableMeta;
+}
+
+/** What a path of this length is called on screen: `padre`, `abuelo`. */
+export const kinshipOf = (via: ReferenceMeta[]): string => KINSHIP[via.length - 1];
+
+/** The name a column of an ancestor answers to, on the wire and in the row. */
+export const reachedName = (a: Ancestor, c: ColumnMeta): string =>
+	[...a.via.map(r => r.name), c.name].join(STEP);
+
+/** Every table reachable from `t` by walking fks, nearest first, as deep as `KINSHIP` can name.
+ * An fk whose target this caller may not read is not in `_meta` at all, so it is not walked.
+ * Two fks onto the same table are two ancestors: they are different paths, told apart by the
+ * fk's own name, which is also what the wire calls them by. */
+export function ancestorsOf(tables: TableMeta[], t: TableMeta): Ancestor[] {
+	const found: Ancestor[] = [];
+
+	let step: Ancestor[] = [{ via: [], table: t }];
+
+	for (let depth = 0; depth < KINSHIP.length; depth++) {
+		step = step.flatMap(from => from.table.references.flatMap(ref => {
+			const table = targetOf(tables, ref);
+
+			return table ? [{ via: [...from.via, ref], table }] : [];
+		}));
+
+		found.push(...step);
+	}
+
+	return found;
+}
+
+/** A column a screen can name: one of the table's own, or one of an ancestor's — told apart by
+ * `via` alone. What the grid draws, what the filter bar offers, what the address carries. */
+export interface Reachable {
+	column: ColumnMeta;
+	/** The table the column belongs to. */
+	owner: TableMeta;
+	/** The fks walked to reach it; empty for the table's own. */
+	via: ReferenceMeta[];
+	/** What the wire calls it: its own name, or the path that reached it. */
+	name: string;
+}
+
+export const ownColumns = (t: TableMeta): Reachable[] =>
+	t.columns.map(column => ({ column, owner: t, via: [], name: column.name }));
+
+export const reachedColumn = (a: Ancestor, column: ColumnMeta): Reachable =>
+	({ column, owner: a.table, via: a.via, name: reachedName(a, column) });
+
+/** Every column a screen can name, its own first. Derived from `_meta` alone, so the address can
+ * resolve one without the screen having to say which are on it. */
+export const reachableFrom = (tables: TableMeta[], t: TableMeta): Reachable[] => [
+	...ownColumns(t),
+	...ancestorsOf(tables, t).flatMap(a => a.table.columns.map(c => reachedColumn(a, c))),
+];

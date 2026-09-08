@@ -1,14 +1,15 @@
 // The filter bar.
 
-import type { ColumnMeta, OperatorMeta, TableMeta } from '../shared/api.js';
+import type { OperatorMeta, TableMeta } from '../shared/api.js';
 import { classed, el } from './dom.js';
+import { kinshipOf, type Reachable, reachableFrom } from './fk.js';
 import { menu, type Option } from './menu.js';
 import { filterQuery } from './query.js';
 import { type Condition, operand } from './route.js';
 
 /** The condition being written: a column, then a comparison, then a value. */
 interface Draft {
-	column?: ColumnMeta;
+	column?: Reachable;
 	operator?: OperatorMeta;
 }
 
@@ -28,10 +29,13 @@ export interface FilterBar {
 }
 
 /**
+ * @param tables every table `_meta` published, so the bar can offer the columns of the ones this
+ * screen points at as well as its own (SCOPE 6b). An fk onto a table the role cannot read is not
+ * in `_meta`, so its columns are neither offered nor filterable.
  * @param operators the comparisons the backend offers, taken from `_meta`
  * @param apply called whenever `query()`'s answer changes
  */
-export function filterBar(operators: OperatorMeta[], apply: () => void): FilterBar {
+export function filterBar(tables: TableMeta[], operators: OperatorMeta[], apply: () => void): FilterBar {
 	const entry = el('input');
 	const draft = classed('span', 'chip draft');
 	const chips = classed('div', 'chips');
@@ -47,6 +51,7 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 	entry.setAttribute('aria-label', 'Filtrar');
 
 	let table: TableMeta | null = null;
+	let named: Reachable[] = [];				// what this screen can filter by, own and reached
 	let applied: Condition[] = [];
 	let being: Draft = {};
 
@@ -55,12 +60,16 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 
 	// --- What the dropdown offers ---
 
+	/** A reached column says which ancestor it came off; its own say their type, as before. */
+	const about = (c: Reachable) =>
+		c.via.length ? `${c.column.type} · ${kinshipOf(c.via)}` : c.column.type;
+
 	const choices = (): Choice[] => {
 		if (!table) return [];
 
 		if (!being.column)
-			return table.columns.map(c =>
-				({ text: c.name, hint: c.type, take: () => { being = { column: c }; } }));
+			return named.map(c =>
+				({ text: c.name, hint: about(c), take: () => { being = { column: c }; } }));
 
 		if (!being.operator)
 			return operators.map(o =>
@@ -129,7 +138,7 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 		remover(`Quitar filtro ${a.column.name}`, remove(a)));
 
 	const placeholder = (): string => {
-		if (being.column && being.operator) return being.column.expected;
+		if (being.column && being.operator) return being.column.column.expected;
 		if (being.column) return 'comparación…';
 		if (applied.length) return 'Agregar otro filtro…';
 
@@ -241,6 +250,7 @@ export function filterBar(operators: OperatorMeta[], apply: () => void): FilterB
 		if (table === t && encode(seed) === query()) return;
 
 		table = t;
+		named = reachableFrom(tables, t);
 		applied = [...seed];
 		being = {};
 		entry.value = '';

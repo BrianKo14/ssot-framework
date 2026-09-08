@@ -4,14 +4,15 @@ import { equalities, filterConditions, parseFilter, where } from '../sql/filter.
 import { HttpError } from '../errors.js';
 import type { ColumnInfo, ReferenceInfo, TableInfo } from '../schema/model.js';
 import { columnList, q, tableRef } from '../sql/identifier.js';
+import { atBase, parseReached, reading } from '../sql/reach.js';
 import { asRecord, checkedValues, namedColumns, rowValues } from '../schema/values.js';
 import { formatNamed } from '../format/registry.js';
 import { sendAs, wrap } from './handler.js';
-import { permit } from './permission.js';
+import { permit, readableBy } from './permission.js';
 
 
 
-// --- Master / Details ---
+// --- MASTER / DETAILS ---
 
 /** Returns a list of path parameter names for a composite key.
  * e.g. `keyParams('pk', [colA, colB])` -> `['pk0', 'pk1']` */
@@ -72,50 +73,57 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 		return { ...given, ...Object.fromEntries(fromMaster.map(([name, param]) => [name, req.params[param]])) };
 	};
 
-	/** This is the conversation step that would usually happen inside Postgres, moved to where the type definitions live. See `db/postgres.ts` for the default override.
-	 * It walks the row's columns and asks each column's own type handler to read its text. */	
+	/** Instead of letting Postgres convert row data to typed values, this code does that conversion
+	 * itself in TypeScript, using each column's own type handler. */
 	const wire = (row: Record<string, unknown>) => rowValues(t.columns, row);
 
 
+	// --- ENDPOINTS ---
 
-	/** --- ENDPOINTS --- **/
-
-	/** SELECT cols FROM table [WHERE col = $1 AND col2 >= $2 ...] ORDER BY pk_col1, pk_col2, ... */
-	const listRows = async (req: Request): Promise<Record<string, unknown>[]> => {
+	/** SELECT cols FROM table [LEFT JOIN reached...] [WHERE ...] ORDER BY pk_col1, pk_col2, ... */
+	const listRows = async (req: Request) => {
 		const raw = withInherited(req, parseFilter(req.query.filter)); 			// under a master, its key comes from the path
+		const asked = parseReached(req.query.with);
+		const read = reading(t, [...asked, ...Object.keys(raw)], readableBy(req));
+		const columns = read.shown(asked);
 
 		const params: unknown[] = [];
-		const filtered = where(filterConditions(t.byName, raw, params));
+		const filtered = where(filterConditions(read.byName, raw, params, read.at));
 
 		const rows = await db.query(
-			`select ${cols} from ${table}${filtered} order by ${pkCols}`, params);	// sort by primary key
+			`${read.statement(columns, filtered)} order by ${read.order}`, params);	// sort by primary key
 
-		return rows.map(wire);
+		return { columns, rows: rows.map(row => rowValues(columns, row)) };
 	};
 
-	// GET /[?filter={"col":value,"col2":{"op":"ge","value":…},...}][&format=xlsx|txt]
+	// GET /[?filter={"col":value,"col2":{"op":"ge","value":…},...}][&with=["fk.col",…]][&format=xlsx|txt]
 	r.get('/', wrap(async (req, res) => {
 		const format = formatNamed(req.query.format);					// before the query: a bad format costs no round trip
+		const { columns, rows } = await listRows(req);
 
 		await sendAs(res, format, {
 			name: t.entity,
-			columns: t.columns,
+			columns,								// the table's own, plus whatever it reached: exporting is reading
 			pk: t.pk.map(c => c.name),
-			rows: await listRows(req),
+			rows,
 		});
 	}));
 
-	// GET /:pk0[/:pk1...]
-	// SELECT cols FROM table WHERE pk_col1 = $1 AND pk_col2 = $2 ...
+	// GET /:pk0[/:pk1...][?with=["fk.col",…]]
+	// SELECT cols FROM table [LEFT JOIN reached...] WHERE pk_col1 = $1 AND pk_col2 = $2 ...
 	r.get(byPk, wrap(async (req, res) => {
-		const params: unknown[] = [];
-		const addressed = where(equalities(addressedRow(req), params));
+		const asked = parseReached(req.query.with);
+		const read = reading(t, asked, readableBy(req));
+		const columns = read.shown(asked);
 
-		const rows = await db.query(`select ${cols} from ${table}${addressed}`, params);
+		const params: unknown[] = [];
+		const addressed = where(equalities(addressedRow(req), params, atBase));
+
+		const rows = await db.query(read.statement(columns, addressed), params);
 
 		if (!rows.length) { res.status(404).json({ error: 'not found' }); return; }
 
-		res.json(wire(rows[0]));
+		res.json(rowValues(columns, rows[0]));
 	}));
 
 	// POST /

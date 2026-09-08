@@ -62,7 +62,7 @@ export function picker(
 
 	const load = async (typed: string) => {
 		try {
-			const rows = await api<Row[]>(listPath(target.entity, asked(typed)));
+			const rows = await api<Row[]>(listPath(target.entity, { filter: asked(typed) }));
 
 			if (typed !== wanted) return;	// a later keystroke already asked for something else
 

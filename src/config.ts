@@ -38,6 +38,6 @@ export function loadConfig(): AppConfig {
     port: optional('PORT', 3000, integer(1, 65535)),
     sessionTtl: optional('SESSION_TTL', 'PT8H', interval),
     cookieSecure: optional('COOKIE_SECURE', false, boolean),
-    pollSeconds: optional('PRESENCE_POLL', 5, integer(1, 300)),
+    pollSeconds: optional('PRESENCE_POLL', 1, integer(1, 300)),
   };
 }

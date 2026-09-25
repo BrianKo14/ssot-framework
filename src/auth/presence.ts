@@ -8,7 +8,7 @@ import { equalities, where } from '../sql/filter.js';
 import { columnList, q, tableRef } from '../sql/identifier.js';
 import { token as tokenType } from '../types/builtin.js';
 import { col, presenceTable } from './entities.js';
-import { mintToken } from './hash.js';
+import { digestOf, mintToken } from './hash.js';
 
 
 // --- Column names ---
@@ -23,10 +23,16 @@ const   P_TAB = col(presenceTable, 'tab'),
 /** What the caller supplies. `seen_at` is not here: it is the database's clock. */
 const PRESENTED = [P_TAB, P_USER, P_ENTITY, P_RECORD];
 
-const SHOWN = [P_USER, P_RECORD];
+const SHOWN = [P_TAB, P_USER, P_ENTITY, P_RECORD];
+
+/** Num. of ID chars from the tab's fingerprint to keep. */
+const ID_CHARS = 12;
 
 /** How many polls a tab may miss before it stops counting as present. */
 const MISSES = 3;
+
+/** How long a tab is considered present, in seconds. */
+const PRESENT_FOR = 15;
 
 
 /** Where a tab says it is. */
@@ -38,6 +44,8 @@ export interface At {
 	entity: string;
 	/** The record the cursor is on, or null on the grid. */
 	record: string | null;
+	/** The set of entities the caller may be told about, per their role. */
+	within: string[];
 }
 
 export interface Presence {
@@ -49,11 +57,11 @@ export interface Presence {
 export function presenceStore(db: Db, pollSeconds: number): Presence {
 	const table = tableRef(presenceTable);
 
-	/** Seen recently enough to still count. The window is derived from the poll the browser was
-	 * told to keep, so the two cannot drift; `make_interval` keeps the number a parameter, which
-	 * an interval written as text could not be. */
+	const presentFor = Math.max(pollSeconds * MISSES, PRESENT_FOR);
+
+	/** SQL expression that checks if a tab is still present. */
 	const fresh = (params: unknown[]): string =>
-		`${q(P_SEEN_AT.name)} > now() - make_interval(secs => $${params.push(pollSeconds * MISSES)})`;
+		`${q(P_SEEN_AT.name)} > now() - make_interval(secs => $${params.push(presentFor)})`;
 
 	/** This tab is here now. Insert or move, in one statement, because a tab that changes screens
 	 * is the same tab: its name is the key. */
@@ -70,15 +78,15 @@ export function presenceStore(db: Db, pollSeconds: number): Presence {
 	};
 
 	return {
-		async see({ tab, user, entity, record }) {
+		async see({ tab, user, entity, record, within }) {
 			const named = tokenType.check(tab);
 			const name = named.ok ? named.value : mintToken();
 
-			// Quiet tabs go on every poll, the way expired sessions go on every login: the table
-			// stays bounded and the framework still owns no timer and no background job.
+			// Delete unfresh presence records
 			const reaping: unknown[] = [];
 			await db.query(`delete from ${table} where not (${fresh(reaping)})`, reaping);
 
+			// Insert or update this tab's presence record + validate
 			await arrive(checkedValues(PRESENTED, {
 				[P_TAB.name]: name,
 				[P_USER.name]: user,
@@ -87,21 +95,30 @@ export function presenceStore(db: Db, pollSeconds: number): Presence {
 			}, true));
 
 			const params: unknown[] = [];
+			/** Conditions to filter the presence records. */
 			const conds = [
-				...equalities({ [P_ENTITY.name]: entity }, params),
+				// Only the entities the caller may be told about, per their role.
+				`${q(P_ENTITY.name)} = any($${params.push(within)}::text[])`,
+				// Only the tabs that are still present.
 				fresh(params),
-				`${q(P_TAB.name)} <> $${params.push(name)}`,		// everyone else, that is
+				// Don't tell the caller about their own tab.
+				`${q(P_TAB.name)} <> $${params.push(name)}`,
 			];
 
 			const rows = await db.query(
 				`select ${columnList(SHOWN)} from ${table}${where(conds)}`
-				+ ` order by ${columnList([P_USER, P_TAB])}`, params);
+				+ ` order by ${columnList([P_ENTITY, P_USER, P_TAB])}`, params);
 
 			const viewers: Viewer[] = rows.map(row => {
 				const seen = rowValues(SHOWN, row);
 				const at = seen[P_RECORD.name];
 
-				return { user: String(seen[P_USER.name]), record: at === null ? null : String(at) };
+				return {
+					id: digestOf(String(seen[P_TAB.name])).slice(0, ID_CHARS),
+					user: String(seen[P_USER.name]),
+					entity: String(seen[P_ENTITY.name]),
+					record: at === null ? null : String(at),
+				};
 			});
 
 			return { tab: name, viewers };

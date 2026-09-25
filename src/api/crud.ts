@@ -40,9 +40,15 @@ const isNestable = (ref: ReferenceInfo) =>
 /** What the poll of a table is called, under that table's own path. */
 const VIEWERS = '_viewers';
 
+/** Presence + the set of entities the caller may be told about. */
+export interface Seeing {
+	see: Presence['see'];
+	readable(req: Request): string[];
+}
+
 /** Generic CRUD router factory.
  * @param master when this table is mounted as a detail, the reference it was mounted through. */
-export function crudRouter(db: Db, t: TableInfo, presence: Presence, master?: ReferenceInfo): Router {
+export function crudRouter(db: Db, t: TableInfo, presence: Seeing, master?: ReferenceInfo): Router {
 	const r = Router({ mergeParams: true });	// `mergeParams` lets the detail's router see the master's path parameters
 
 	r.use(permit(t));				// first thing: authorization gate
@@ -158,6 +164,7 @@ export function crudRouter(db: Db, t: TableInfo, presence: Presence, master?: Re
 			user: req.principal!.username,
 			entity: t.entity,
 			record: row && t.pk.map(c => String(row[c.name])).join('/'), // PK from validated row data
+			within: presence.readable(req),				     // every screen this role may open
 		}));
 	});
 
@@ -259,8 +266,6 @@ export function crudRouter(db: Db, t: TableInfo, presence: Presence, master?: Re
 		res.status(204).end();
 	}));
 
-
-
 	return r;
 }
 
@@ -269,12 +274,17 @@ export function crudRouter(db: Db, t: TableInfo, presence: Presence, master?: Re
 export function entityRouter(db: Db, tables: TableInfo[], presence: Presence): Router {
 	const r = Router();
 
+	const seeing: Seeing = {
+		see: presence.see,
+		readable: req => tables.filter(readableBy(req)).map(t => t.entity),
+	};
+
 	for (const t of tables) {					// per table CRUD router at /api/<table>
-		r.use(`/${t.entity}`, crudRouter(db, t, presence));
+		r.use(`/${t.entity}`, crudRouter(db, t, seeing));
 
 		// ...and mount each of its details' collections under it, at /api/<master>/<master key>/<detail>.
 		for (const ref of t.details.filter(isNestable))
-			r.use(`/${t.entity}${detailPath(ref)}`, crudRouter(db, ref.from, presence, ref));
+			r.use(`/${t.entity}${detailPath(ref)}`, crudRouter(db, ref.from, seeing, ref));
 	}
 
 	return r;

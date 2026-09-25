@@ -50,7 +50,7 @@ PORT=3000
 are optional: `SESSION_TTL` (login session lifetime, ISO-8601 duration,
 default `PT8H`), `COOKIE_SECURE` (`true`/`false`, default `false`) and
 `PRESENCE_POLL` (seconds between a screen's "who else is here" polls, default
-`5`; a tab stops being counted after three of them go unanswered).
+`1`).
 
 ### Start the database
 

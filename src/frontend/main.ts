@@ -392,43 +392,198 @@ const grants = (t: TableMeta) => {
     more often than the poll answers, and a redraw must not blank what is true. */
 let seen: Viewer[] = [];
 
-/** Counted beside the screen's name. */
-const watchers = classed('p', 'watchers');
+/** One circle each, beside what the screen says about itself. */
+const watchers = classed('div', 'watchers');
 
-/** Draws them twice over: how many are here, beside the heading, and who is on which record,
-    on the line that record is drawn on. The count alone would say something is going on without
-    saying where; the marks are what make it answerable. */
+/** One stack per entity in the rail, filled in when the rail is built. */
+const rails = new Map<string, (viewers: Viewer[], colours: Map<string, number>) => void>();
+
+/** How many colours the stylesheet holds. */
+const COLOURS = 8;
+
+const hashed = (s: string) => [...s].reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) >>> 0, 0);
+
+/** A colour per tab, all of them different.
+ *
+ * Each tab asks for the colour its own name hashes to, and takes the next free one when that is
+ * already spoken for. Asking first is what keeps a colour still: it does not depend on how many
+ * others are here, so an unrelated tab arriving or leaving does not repaint everybody. Walking
+ * on when it is taken is what keeps them apart — up to the eight the stylesheet has, after
+ * which two do share, which is better than either leaving a tab uncoloured or inventing a
+ * colour the stylesheet has never seen. Sorted first, so the same set always assigns the same. */
+const coloured = (viewers: Viewer[]): Map<string, number> => {
+	const taken = new Set<number>();
+	const colours = new Map<string, number>();
+
+	for (const { id } of [...viewers].sort((a, b) => a.id.localeCompare(b.id))) {
+		let slot = hashed(id) % COLOURS;
+
+		while (taken.size < COLOURS && taken.has(slot)) slot = (slot + 1) % COLOURS;
+
+		taken.add(slot);
+		colours.set(id, slot);
+	}
+
+	return colours;
+};
+
+/** What a circle says when it is hovered: who, and where they are if they are anywhere. */
+const naming = (v: Viewer) => `${v.user}${v.record === null ? '' : ` · ${v.record}`}`;
+
+/** A box that holds circles and keeps the ones that are still wanted.
+ *
+ * Kept and matched by tab rather than thrown away and built again on every answer: an answer
+ * arrives every poll and almost always says the same thing, and a circle that is still here is
+ * the *same* circle — so it does not blink, and the name it is showing under the pointer does
+ * not blink with it. Used twice, for the header and for each line of the rail. */
+const stackOf = (box: HTMLElement) => {
+	const kept = new Map<string, HTMLElement>();
+
+	return (viewers: Viewer[], colours: Map<string, number>) => {
+		box.hidden = viewers.length === 0;
+
+		for (const [id, dot] of kept)
+			if (!viewers.some(v => v.id === id)) { dot.remove(); kept.delete(id); }
+
+		viewers.forEach((v, i) => {
+			// one tab, one circle — the same user looking twice is two of them, in two colours
+			const dot = kept.get(v.id) ?? classed('span', 'viewer', v.user.slice(0, 1));
+
+			dot.dataset.colour = String(colours.get(v.id));
+			dot.dataset.name = naming(v);
+			dot.setAttribute('aria-label', naming(v));
+			dot.tabIndex = 0;		// so the name can be reached without a pointer
+
+			kept.set(v.id, dot);
+
+			// Only when it is not already in that place. Appending a node that is *already* a
+			// child moves it — a removal and an insertion — and that restarts the fade and drops
+			// the hover under the pointer. A circle that has not moved is not touched at all.
+			const there = box.children[i];
+
+			if (there !== dot) box.insertBefore(dot, there ?? null);
+		});
+	};
+};
+
+const inHeader = stackOf(watchers);
+
+/** Draws them three times over: a circle each beside the counts, the line their cursor is on
+    outlined in that same colour, and — for every screen, not just this one — a circle beside
+    that screen's name in the rail. The circles alone would say something is going on without
+    saying where; the outline is what makes it answerable on this screen and the rail is what
+    makes it answerable about the others. The shared colour ties all three together without any
+    of them having to name the other. */
 const drawViewers = () => {
-	watchers.hidden = seen.length === 0;
-	watchers.textContent = `${seen.length} viendo`;
-	watchers.title = seen.length
-		? `Otros con ${screen?.entity ?? ''} abierto:\n`
-			+ seen.map(v => `${v.user}${v.record === null ? '' : ` · ${v.record}`}`).join('\n')
-		: '';
+	const colours = coloured(seen);			// across every screen, so a tab is one colour everywhere
+	const here = seen.filter(v => v.entity === screen?.entity);
 
-	const cursors = new Map<string, string[]>();
+	inHeader(here, colours);
 
-	for (const { user, record } of seen)
-		if (record !== null) cursors.set(record, [...cursors.get(record) ?? [], user]);
+	for (const [entity, box] of rails)
+		box(seen.filter(v => v.entity === entity), colours);
+
+	const cursors = new Map<string, Viewer[]>();
+
+	for (const v of here)
+		if (v.record !== null) cursors.set(v.record, [...cursors.get(v.record) ?? [], v]);
 
 	for (const tr of gridRows.querySelectorAll<HTMLTableRowElement>('tr[data-at]')) {
 		const who = cursors.get(String(tr.dataset.at)) ?? [];
+		const mark = tr.querySelector<HTMLElement>('.watcher');
 
-		tr.querySelector('.watcher')?.remove();
 		tr.classList.toggle('watched', who.length > 0);
 
-		if (!who.length) continue;
+		if (!who.length) {
+			mark?.remove();
+			delete tr.dataset.colour;
+			continue;
+		}
+
+		// The line takes the colour of the first of them, which is the one the stylesheet can
+		// draw; the mark on its handle says how many there are when it is more than one.
+		tr.dataset.colour = String(colours.get(who[0].id));
 
 		// The leading column is 2.25rem wide and sticky, so the mark says who in the space of a
-		// letter — one initial, or how many when there are several — and names them on hover.
-		const mark = classed('span', 'watcher', who.length === 1 ? who[0].slice(0, 1) : String(who.length));
+		// letter — one initial, or how many when there are several. It names nobody: the name is
+		// the circle's to give. Kept rather than remade, for the same reason the circles are:
+		// a mark that is fading under the pointer must not be restarted every few seconds.
+		const letter = who.length === 1 ? who[0].user.slice(0, 1) : String(who.length);
 
-		mark.title = `${who.join(', ')} · acá`;
-		tr.querySelector('.lead')?.append(mark);
+		if (mark) mark.textContent = letter;
+		else tr.querySelector('.lead')?.append(classed('span', 'watcher', letter));
 	}
+
+	// The grid draws its lines as each cell's own bottom border, so a row's *top* edge belongs to
+	// whatever is above it — the row before, or the header. That element is told which colour to
+	// draw it in, because it has no way to read it off the row below; a row already wearing a
+	// colour of its own keeps it, since its edge and that colour are the same line.
+	const lines = [gridHead, ...gridRows.children] as HTMLElement[];
+
+	lines.forEach((above, i) => {
+		const below = lines[i + 1];
+		const edge = below?.classList.contains('watched') === true && !above.classList.contains('watched');
+
+		above.classList.toggle('above-watched', edge);
+
+		if (edge) above.dataset.colour = String(below.dataset.colour);
+		else if (!above.classList.contains('watched')) delete above.dataset.colour;
+	});
 };
 
-const showViewers = (viewers: Viewer[]) => { seen = viewers; drawViewers(); };
+/** The records somebody's cursor is on, on the screen being looked at. */
+const holdings = (viewers: Viewer[]): Set<string> =>
+	new Set(viewers.flatMap(v => v.entity === screen?.entity && v.record !== null ? [v.record] : []));
+
+/** Rows this tab is in the middle of changing.
+ *
+ * Reading one again would move its version out from under what is about to be written with that
+ * version — and that version is the only thing standing between the write and quietly landing on
+ * top of whatever just changed. So these are left exactly as they are, and the refusal at save
+ * time is what speaks instead. */
+const busyWith = (at: string): boolean =>
+	editing?.at.join('/') === at
+	|| (opened?.key.join('/') === at && peekFields.querySelector('input.dirty') !== null);
+
+/** Reads one row again and puts it back, after somebody else let go of it.
+ *
+ * Enter both saves and releases, so a row that was just let go of is very likely a row that was
+ * just changed — and the moment it is let go of is the moment to show what it says now, rather
+ * than whenever whoever is looking at it happens to navigate. Nothing new is on the wire for
+ * this: who is holding what was already being answered every poll, and this reads the *end* of
+ * a hold out of it. What it does not catch is a row nobody was holding — an insert, a delete,
+ * or a write from outside a browser — which still waits for the next time the list is asked for. */
+const refresh = async (at: string): Promise<void> => {
+	const s = sheet;
+
+	if (!s || busyWith(at)) return;
+
+	const row = listed.find(r => key(s.t, r).join('/') === at);
+	const tr = gridRows.querySelector<HTMLTableRowElement>(`tr[data-at="${CSS.escape(at)}"]`);
+
+	if (!row || !tr) return;
+
+	try {
+		await reread(s, row);
+	} catch {
+		return;				// gone, or no longer readable: the next read of the list will say so
+	}
+
+	if (tr.isConnected) fill(tr, s, row);
+
+	refreshPeek(s.t, row);			// and in the panel, if that is the record it is showing
+};
+
+const showViewers = (viewers: Viewer[]) => {
+	const held = holdings(seen);
+
+	seen = viewers;
+	drawViewers();
+
+	const still = holdings(viewers);
+
+	for (const at of held) if (!still.has(at)) void refresh(at);
+};
 
 
 // --- Row peek ---
@@ -474,7 +629,7 @@ const closePeek = (restore = false) => {
 	peekDetailRows.replaceChildren();	// so reopening never flashes the last record's rows
 	dropPickers();
 
-	watch.at(screen?.entity ?? null, []);	// the cursor is back on the grid, on no record in particular
+	cursor();				// the panel is closed: whatever the cursor is now, it is not this record
 
 	if (restore && was) route.mark(here());
 };
@@ -526,7 +681,7 @@ function show(what: Peeked): void {
 	what.landing().focus();
 
 	route.mark(here(what.key));		// the screen already shows it; the address only says so
-	watch.at(what.t.entity, what.key);	// an open record is where this tab's cursor is
+	cursor();				// an open record is where this tab's cursor is
 }
 
 /** Save and Cancel are enabled only while the panel disagrees with the row it is showing. */
@@ -884,7 +1039,19 @@ const insertDetailRow: Action = {
 // --- Editing ---
 
 /** The cell being edited — one at a time, so opening another can call it off. */
-let editing: { td: HTMLTableCellElement; cancel: () => void } | null = null;
+let editing: { td: HTMLTableCellElement; cancel: () => void; at: string[] } | null = null;
+
+/** Where this tab's cursor is, as the screen itself says: the row being edited, or the record
+    the panel holds, or nowhere in particular.
+
+    Read here rather than announced by each thing that moves it. Every one of them — opening a
+    record, closing it, opening a cell, closing a cell — then says the same sentence, and none
+    of them has to know what the others are doing. Letting go of a row is the case that was
+    missing: an editor announced itself on the way in and nothing on the way out, so to everyone
+    else the row stayed held until its owner happened to open something else. */
+const cursor = () => {
+	if (screen) watch.at(screen.entity, (editing?.at.length ? editing.at : opened?.key) ?? []);
+};
 
 /** Opening an editor is the last moment before something is typed over a row, so it is where the
     row is asked whether it is still the row that was read (SCOPE 6c). It costs one read and it
@@ -941,6 +1108,8 @@ function edit(s: Sheet, row: Row, c: ColumnMeta, td: HTMLTableCellElement): void
 		list?.destroy();
 
 		if (tr?.isConnected) fill(tr, s, row);
+
+		cursor();			// let go of the row, so everyone else sees it let go
 	};
 
 	/** @param written what to send: the single typed column by default, or every column of a
@@ -967,6 +1136,7 @@ function edit(s: Sheet, row: Row, c: ColumnMeta, td: HTMLTableCellElement): void
 			if (tr?.isConnected) fill(tr, s, row);
 
 			refreshPeek(t, row);
+			cursor();			// the cell is closed: the row is no longer being held
 			say(summary(s));
 		} catch (err) {
 			if (sessionEnded(err)) { location.reload(); return; }
@@ -997,25 +1167,31 @@ function edit(s: Sheet, row: Row, c: ColumnMeta, td: HTMLTableCellElement): void
 	td.classList.add('editing');
 	td.replaceChildren(input);
 
-	// editing a cell is being on that record, which is what a cursor is — but only on the screen's
-	// own grid: a subtable's row belongs to another screen, and saying so there would answer the
-	// count and the marks with a different table's viewers
-	if (s.t === screen) watch.at(s.t.entity, key(s.t, row));
-
 	// after the cell holds the box, so the list is not swept out with what the cell held before
 	if (fk) list = picker(input, td, fk.ref, fk.target, values => void commit(values));
 
 	input.focus();
 	input.select();
 
-	editing = { td, cancel: restore };
+	// editing a cell is being on that record, which is what a cursor is — but only on the screen's
+	// own grid: a subtable's row belongs to another screen, and its master is where this tab
+	// still is, which is what `cursor` falls back to
+	editing = { td, cancel: restore, at: s.t === screen ? key(s.t, row) : [] };
+
+	cursor();
 }
 
+/** A screen's line in the rail: its name, and who is on it — which is the same question the
+    header answers about the screen being looked at, asked of all the others at once. The name
+    is wrapped so that *it* is what gets cut short when the rail is too narrow, rather than the
+    line hiding what overflows it, which would take the circles with it. */
 const link = (t: TableMeta) => {
-	const a = el('a', t.entity);
+	const a = el('a', classed('span', 'name', t.entity), classed('span', 'watchers'));
 
 	a.href = route.href({ screen: t.entity, key: [], conditions: [] });
 	a.dataset.entity = t.entity;
+
+	rails.set(t.entity, stackOf(a.querySelector('.watchers') as HTMLElement));
 
 	return a;
 };
@@ -1027,6 +1203,11 @@ let tables: TableMeta[] = [];
 
 /** The screen being viewed, so the address can be written from what is on it. */
 let screen: TableMeta | null = null;
+
+/** The screen's own sheet and the rows it drew, so that one row can be read again and put back
+    without redrawing the list around it. */
+let sheet: Sheet | null = null;
+let listed: Row[] = [];
 
 /** Built in `main`, once `_meta` has answered. */
 let defaultOp!: string;
@@ -1063,6 +1244,9 @@ async function load(s: Sheet): Promise<Row[]> {
 	const data = await api<Row[]>(
 		listPath(s.t.entity, { filter: filters.query(), reached: reached(s.columns) }));
 
+	sheet = s;				// what a row read again on its own has to be drawn back into
+	listed = data;
+
 	renderSheet(s, data);
 	drawViewers();				// the lines are new; who is on them is not
 	say(summary(s));
@@ -1093,7 +1277,7 @@ async function draw(): Promise<void> {
 	for (const a of nav.querySelectorAll('a'))
 		a.setAttribute('aria-current', String(a.dataset.entity === t.entity));
 
-	heading.replaceChildren(t.entity, grants(t), watchers);
+	heading.replaceChildren(t.entity, grants(t));
 	screen = t;
 	watch.at(t.entity, []);			// a record the address names announces itself when it opens
 	filters.reset(t, view.conditions);
@@ -1163,6 +1347,7 @@ async function main(): Promise<void> {
 
 	nav.replaceChildren(...tables.map(link));
 	toolbar.append(filters.element, inserts.element);
+	headerEnd.prepend(watchers);		// ahead of the counts: who is here, then what is here
 	headerEnd.append(exports.element);
 	peekTabbar.append(details.element);	// outside the tabs' scroll box, so its list can escape it
 	peekClose.addEventListener('click', dismissPeek);

@@ -4,6 +4,7 @@ import type { Viewer, Watching } from '../shared/api.js';
 import { api } from './api.js';
 import { sessionEnded } from './auth.js';
 import { watchPath } from './query.js';
+import { same } from './route.js';
 
 /** Where this tab is: a screen, and the record its cursor is on. */
 interface Where {
@@ -21,17 +22,47 @@ export interface Watch {
 /** @param seconds what `_meta` published, which is also what the server counts a tab present
  * within — one number, so the two cannot drift.
  * @param drawn called with the others every time an answer comes back. */
+/** Is this the same place as that one? Two announcements of the same position say nothing new,
+ * and a tab that says nothing new should not ask again. */
+const alike = (a: Where | null, b: Where | null): boolean =>
+	a === b || (a !== null && b !== null && a.entity === b.entity && same(a.record, b.record));
+
+/** Where a tab's name is kept so that refreshing the page does not make it a different tab.
+ *
+ * `sessionStorage` is the browser's own idea of a tab: it survives a reload, it dies when the
+ * tab dies, and no other tab can see it — which is exactly the thing being counted. Held only
+ * in a variable, a refresh minted a new name and left the old row standing for the length of
+ * the window, so a page refreshed a few times showed up as several people.
+ *
+ * It is not a credential and none of the reasoning about the session cookie applies to it: it
+ * authenticates nothing, and the row it names is rewritten with the caller's own identity on
+ * every poll, so the worst it can be used for is to move a marker the user could move anyway.
+ * A browser that refuses storage at all simply goes back to leaving a ghost per refresh. */
+const KEPT = 'presence-tab';
+
+const remembered = (): string | null => {
+	try { return sessionStorage.getItem(KEPT); } catch { return null; }
+};
+
+const remember = (name: string): void => {
+	try { sessionStorage.setItem(KEPT, name); } catch { /* private window, or storage refused */ }
+};
+
 export function watching(seconds: number, drawn: (viewers: Viewer[]) => void): Watch {
-	/** Minted by the server on the first ask. It lives in this closure and nowhere else: a tab
-	 * is what it counts, and a tab is exactly as long-lived as this page. */
-	let tab: string | null = null;
+	/** Minted by the server on the first ask, and kept for as long as this browser tab lives —
+	 * across a reload included, which is what `remembered` is for. */
+	let tab: string | null = remembered();
 	let where: Where | null = null;
 	let asking = false;
+	let again = false;
 
 	const ask = async (): Promise<void> => {
-		// A tab nobody is looking at is not watching anything, and says so by going quiet: the
-		// server stops counting it a few polls later, without being told.
-		if (asking || where === null || document.hidden) return;
+		if (where === null) return;
+
+		// One question at a time, but a move made while one is in the air is not dropped: it is
+		// asked the moment that one lands. Without this a click during a round trip would wait
+		// for the next round, which is most of what made this feel slow.
+		if (asking) { again = true; return; }
 
 		const asked = where;
 
@@ -40,27 +71,45 @@ export function watching(seconds: number, drawn: (viewers: Viewer[]) => void): W
 		try {
 			const seen = await api<Watching>(watchPath(asked.entity, asked.record, tab));
 
-			tab = seen.tab;
+			if (seen.tab !== tab) { tab = seen.tab; remember(tab); }	// only what a new name costs
 
-			if (where === asked) drawn(seen.viewers);	// a screen that has moved on draws its own answer
+			// Drawn as long as it is still the same screen. Where *this* tab's own cursor has
+			// moved to meanwhile does not make the answer wrong — it is about everybody else,
+			// and the follow-up ask is already queued.
+			if (where !== null && where.entity === asked.entity) drawn(seen.viewers);
 		} catch (err) {
 			// A poll that fails says nothing and the next one tries again — it must never be what
 			// takes a screen down. A session that ended is the one thing worth acting on.
 			if (sessionEnded(err)) location.reload();
 		} finally {
 			asking = false;
+
+			if (again) { again = false; void ask(); }
 		}
 	};
 
 	setInterval(() => void ask(), seconds * 1000);
-	addEventListener('visibilitychange', () => void ask());		// back in view: say so now, not in a few seconds
+
+	// A tab that is not on screen is still a tab with a record open, which is the whole thing
+	// presence is asked about — so it keeps answering. It only asks *sooner* on coming back,
+	// so that whoever arrived while it was away shows up at once rather than a round later.
+	addEventListener('visibilitychange', () => { if (!document.hidden) void ask(); });
 
 	return {
 		at(entity, record) {
-			where = entity === null ? null : { entity, record };
+			const moved = entity === null ? null : { entity, record };
 
-			if (entity === null) drawn([]);
-			else void ask();
+			if (alike(where, moved)) return;		// nothing new to say
+
+			const elsewhere = where?.entity !== moved?.entity;
+
+			where = moved;
+
+			// A new screen starts with nobody on it rather than with the last screen's people,
+			// who are not here. The answer fills it back in within one round trip.
+			if (elsewhere) drawn([]);
+
+			void ask();
 		},
 	};
 }

@@ -62,9 +62,12 @@ export interface SystemMeta {
 	pollSeconds: number;
 }
 
-/** Another tab on the same entity. */
+/** Another tab, on this screen or on any other the caller is allowed to know about. */
 export interface Viewer {
+	id: string;
 	user: string;
+	/** Which screen they have open. */
+	entity: string;
 	/** The record their cursor is on. Its pk values as the address writes them, or null. */
 	record: string | null;
 }

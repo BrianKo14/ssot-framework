@@ -18,6 +18,19 @@
 
 	--radius: 6px;
 
+	/* One per open tab (SCOPE 6d). Eight hues far enough apart to be told apart at the size of
+	   a letter, all dark enough to carry white text — and deliberately none of them the brand
+	   green (which already means "the open row") or the red `--bad` reads as. */
+	--viewer-0: #2563eb;
+	--viewer-1: #b45309;
+	--viewer-2: #be185d;
+	--viewer-3: #7c3aed;
+	--viewer-4: #0f766e;
+	--viewer-5: #c2410c;
+	--viewer-6: #4338ca;
+	--viewer-7: #4d7c0f;
+	--viewer-ink: #fff;
+
 	/* Drawn, not fetched: a mask, so `currentColor` tints it and one file covers both themes. */
 	--icon-table: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.4"><rect x="2.4" y="2.9" width="11.2" height="10.2" rx="1.8"/><path d="M2.4 6.4h11.2M6.6 6.4v6.7"/></svg>');
 	--icon-expand: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9"/></svg>');
@@ -40,8 +53,31 @@
 		--brand-ink: #3ecf8e;	/* on a dark surface the accent reads as-is */
 		--brand-soft: rgb(62 207 142 / .12);
 		--bad: #ff7b6b;
+
+		/* The same eight, lifted to read on a dark surface — which flips what the letter on
+		   them has to be, so the ink is a token too rather than a colour written twice. */
+		--viewer-0: #60a5fa;
+		--viewer-1: #fbbf24;
+		--viewer-2: #f472b6;
+		--viewer-3: #a78bfa;
+		--viewer-4: #2dd4bf;
+		--viewer-5: #fb923c;
+		--viewer-6: #818cf8;
+		--viewer-7: #a3e635;
+		--viewer-ink: #171717;
 	}
 }
+
+/* Which of the eight a thing wears. Set on a circle and on the line its tab's cursor is on, so
+   both read the same token and the colour cannot say two things. */
+[data-colour="0"] { --viewer: var(--viewer-0); }
+[data-colour="1"] { --viewer: var(--viewer-1); }
+[data-colour="2"] { --viewer: var(--viewer-2); }
+[data-colour="3"] { --viewer: var(--viewer-3); }
+[data-colour="4"] { --viewer: var(--viewer-4); }
+[data-colour="5"] { --viewer: var(--viewer-5); }
+[data-colour="6"] { --viewer: var(--viewer-6); }
+[data-colour="7"] { --viewer: var(--viewer-7); }
 
 * { box-sizing: border-box; }
 
@@ -112,9 +148,40 @@ aside h2 {
 	font-size: .8125rem;
 	text-decoration: none;
 	white-space: nowrap;
+}
+
+/* The name is what gets cut short when the rail is too narrow — not the line, which would take
+   whoever is on that screen with it, and their names hang below the circle. */
+#entities .name {
+	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
+
+/* Who is on each of the other screens, pushed to the far end of its line. Smaller than the
+   header's: the header answers about the screen being looked at, this answers about the rest. */
+#entities .watchers {
+	margin-left: auto;
+	padding-left: .25rem;
+}
+#entities .viewer {
+	width: 1.125rem;
+	height: 1.125rem;
+	box-shadow: 0 0 0 2px var(--surface);
+	font-size: .5rem;
+}
+#entities .viewer + .viewer { margin-left: -.375rem; }
+
+/* The ring is the background showing through, so it follows the line's own background. */
+#entities a:hover .viewer { box-shadow: 0 0 0 2px var(--hover); }
+#entities a[aria-current="true"] .viewer {
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 14%, var(--surface));
+}
+
+/* These circles sit at the right edge of a rail that scrolls, so their names hang from that
+   edge inwards instead of centred on the circle, which would put them past it and out of sight. */
+#entities .viewer::after { left: auto; right: 0; transform: none; }
+#entities .viewer::before { left: auto; right: .3125rem; transform: none; }
 #entities a::before {
 	content: "";
 	flex: none;
@@ -189,23 +256,75 @@ main > header {
 	letter-spacing: .03em;
 }
 
-/* How many others have this screen open (SCOPE 6d). It sits with the capability badges rather
-   than with the status pill: both say what is true of this screen right now, while the pill
-   says what the screen is doing. Hidden outright at zero — "0 viendo" is noise, and a badge
-   that only appears when someone arrives is the notification. */
-#title .watchers {
+/* Who else has this screen open (SCOPE 6d), just left of what the screen says about itself:
+   who is here, then what is here. One circle per open tab, overlapped into a stack so the
+   header does not grow a column's worth each time somebody arrives. Hidden outright when
+   nobody is — an empty stack is noise, and one that appears *is* the notification. */
+.watchers {
+	display: flex;
+	align-items: center;
 	flex: none;
-	margin: 0;
-	padding: .03125rem .375rem;
-	border-radius: 999px;
-	background: color-mix(in srgb, var(--brand) 14%, transparent);
-	color: var(--brand-ink);
-	font-size: .5625rem;
-	font-weight: 600;
-	letter-spacing: .03em;
-	white-space: nowrap;
+	padding-left: .25rem;		/* room for the first circle's ring, which sits outside it */
+}
+
+/* `display` on the rule would otherwise win over what `hidden` asks for, and an empty stack
+   would still take its padding. */
+.watchers[hidden] { display: none; }
+
+.viewer {
+	position: relative;
+	display: grid;
+	place-content: center;
+	width: 1.375rem;
+	height: 1.375rem;
+	border-radius: 50%;
+	box-shadow: 0 0 0 2px var(--surface);	/* a ring in the header's own colour, so overlapping reads as two */
+	background: var(--viewer);
+	color: var(--viewer-ink);
+	font-size: .625rem;
+	font-weight: 700;
+	text-transform: uppercase;
 	cursor: default;
 }
+.viewer + .viewer { margin-left: -.4375rem; }
+.viewer:hover, .viewer:focus-visible { z-index: 3; }	/* the one being asked about comes forward, and its name with it */
+
+/* The name, on hover or on focus. Drawn here rather than left to the browser's own tooltip:
+   that one takes a second to appear, which is too slow for something you are pointing at to
+   find out who it is. It hangs below the header — nothing above it clips. */
+.viewer::after {
+	content: attr(data-name);
+	position: absolute;
+	top: calc(100% + .5rem);
+	left: 50%;
+	padding: .1875rem .4375rem;
+	border-radius: 5px;
+	background: var(--ink);
+	color: var(--surface);
+	font-size: .6875rem;
+	font-weight: 500;
+	letter-spacing: 0;
+	text-transform: none;
+	white-space: nowrap;
+}
+.viewer::before {				/* the little arrow, pointing back at the circle */
+	content: "";
+	position: absolute;
+	top: calc(100% + .125rem);
+	left: 50%;
+	border: .1875rem solid transparent;
+	border-bottom-color: var(--ink);
+}
+.viewer::after, .viewer::before {
+	transform: translateX(-50%);
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity .1s ease-out;
+}
+.viewer:hover::after, .viewer:hover::before,
+.viewer:focus-visible::after, .viewer:focus-visible::before { opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) { .viewer::after, .viewer::before { transition: none; } }
 
 /* One pill, three states: counts when idle, a spinner while loading, red on failure. */
 #status {
@@ -618,25 +737,51 @@ tr.open .lead :is(button, a) { opacity: 1; }
 tr.open .lead { background: var(--brand-soft); }
 tr.open .lead :is(button, a) { color: var(--brand-ink); }
 
-/* Another cursor sitting on this row (SCOPE 6c/6d). Marked where the row is already marked —
-   its handle — because that is the column that says what is true of a row rather than of its
-   data. It covers the handle while it is at rest, and steps aside on hover so the row can still
-   be opened: what is under the pointer is the thing the pointer came for.
-   No `position: relative` on the cell: it is already `sticky`, which positions it. */
+/* The line another cursor is sitting on (SCOPE 6c/6d): a band in the colour of the circle that
+   cursor belongs to, which is the whole of how the two are tied together.
+
+   The grid draws its own lines as each cell's right and bottom border, so the colour *becomes*
+   those lines instead of being drawn inside them — which is what an inset ring did, and it read
+   as a second, thinner box sitting within the grid's own. The row's bottom border is its lower
+   edge; the verticals inside the band go, so the row reads as one thing rather than as cells. */
+tr.watched > td {
+	background: color-mix(in srgb, var(--viewer) 14%, var(--surface));
+	border-right-color: transparent;
+	border-bottom-color: var(--viewer);
+}
+
+/* A row's top edge is not its own: it is the bottom border of whatever sits above it, the row
+   before or the header. That element is told which colour to draw it in — it has no way to read
+   it off the row below — and a row already wearing a colour of its own keeps it. */
+.above-watched > :is(td, th) { border-bottom-color: var(--viewer); }
+
+/* The handle, filled in that tab's own colour — the same fill as its circle — with the initial
+   of whoever is on the row. The column that already says what is true *of a row* rather than of
+   its data now says whose it is, and says it the way the header says it.
+   No `position: relative` on the cell: it is already `sticky`, which positions it.
+
+   The mark carries no name: the name lives on the circle, and the colour says which circle. */
+tr.watched > td.lead { background: var(--viewer); }
+tr.watched .lead :is(button, a) { color: var(--viewer-ink); }
+
 .watcher {
 	position: absolute;
 	inset: 0;
 	display: grid;
 	place-content: center;
-	background: var(--raised);
-	color: var(--muted);
+	color: var(--viewer-ink);
 	font-size: .625rem;
 	font-weight: 700;
 	text-transform: uppercase;
-	cursor: default;
+	pointer-events: none;			/* the handle underneath stays clickable straight through it */
+	transition: opacity .12s ease-out;
 }
-tbody tr:hover .watcher { display: none; }
-tr.watched .lead { box-shadow: inset 2px 0 0 var(--muted); }
+
+/* Under the pointer the letter gives way to the handle, which is drawn in the same ink on the
+   same colour — so the cell never changes and nothing appears to vanish as the mouse crosses. */
+tbody tr:hover .watcher { opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) { .watcher { transition: none; } }
 
 .null { color: var(--faint); font-style: italic; }
 

@@ -55,6 +55,24 @@ export interface SystemMeta {
 	operators: OperatorMeta[];
 	defaultOperator: string;
 	formats: FormatMeta[];
+	/** Name of the column that tracks the version of each row, for concurrency control.
+	 * Presented in `If-Match` headers. E.g. `_version`. */
+	stamp: string;
+	/** Polling interval + presence tracking, in seconds. */
+	pollSeconds: number;
+}
+
+/** Another tab on the same entity. */
+export interface Viewer {
+	user: string;
+	/** The record their cursor is on. Its pk values as the address writes them, or null. */
+	record: string | null;
+}
+
+/** The answer to a poll: this tab's own name, and who else is here. */
+export interface Watching {
+	tab: string;
+	viewers: Viewer[];
 }
 
 /** One refusal per column name. */

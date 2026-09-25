@@ -1,6 +1,7 @@
 import path from 'node:path';
 import express from 'express';
 import { AUTH_SCHEMA, authTables } from '../auth/entities.js';
+import { presenceStore } from '../auth/presence.js';
 import type { Authenticator } from '../auth/store.js';
 import type { AppConfig } from '../config.js';
 import type { Db } from '../db/postgres.js';
@@ -56,10 +57,10 @@ export function buildApp(db: Db, tables: TableInfo[], auth: Authenticator, confi
 	app.use(`/api/${AUTH}`, sessionRouter(auth, config));
 
 	// --> 5. Schema metadata
-	app.use(`/api/${META}`, metaRouter(tables));
+	app.use(`/api/${META}`, metaRouter(tables, config.pollSeconds));
 
 	// --> 6. One CRUD router per table + each detail under its master
-	app.use('/api', entityRouter(db, tables));
+	app.use('/api', entityRouter(db, tables, presenceStore(db, config.pollSeconds)));
 
 	// --> 7. Frontend
 	app.use(express.static(PUBLIC_DIR));						// must go after /api; serves the login page anonymously

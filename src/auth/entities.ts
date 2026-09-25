@@ -11,6 +11,7 @@ const typeDefs = defineTypes({
 	secret: { tsType: boxType<string>(), base: 'text', attrs: { kind: 'bound', maxLength: 200 } },
 	digest: { tsType: boxType<string>() },	// SHA-256 of a session token, see `digestOf` in `hash.ts`
 	role: { tsType: boxType<string>() },	// what the access policy grants against, see `schema/access.ts`
+	token: { tsType: boxType<string>() },	// browser tab identifier, minted like a session's token
 });
 
 const authTypes = handlersFor(typeDefs);
@@ -54,6 +55,19 @@ const entityDefs = defineEntities({ ...inSchema(AUTH_SCHEMA, {
 		} satisfies RecordDef<typeof typeDefs>,
 		fks: { user: { entity: `${AUTH_SCHEMA}.user`, fields: { user: 'username' } } },
 	}),
+
+	/** One browser tab. */
+	presence: defineEntity({
+		pk: ['tab'],
+		fields: {
+			tab: { type: 'token' },
+			user: { type: 'username', nullable: false },
+			entity: { type: 'text', nullable: false },
+			record: { type: 'text' },			// where the cursor is, pk values as the address writes them
+			seen_at: { type: 'datetime', nullable: false },	// UTC, by the database's clock
+		} satisfies RecordDef<typeof typeDefs>,
+		fks: { user: { entity: `${AUTH_SCHEMA}.user`, fields: { user: 'username' } } },
+	}),
 }) });
 
 /** Framework's tables.
@@ -75,6 +89,7 @@ const find = (name: string): TableInfo => {
 export const userTable = find(`${AUTH_SCHEMA}.user`);
 export const credentialTable = find(`${AUTH_SCHEMA}.credential`);
 export const sessionTable = find(`${AUTH_SCHEMA}.session`);
+export const presenceTable = find(`${AUTH_SCHEMA}.presence`);
 
 /** A column in an auth table. */
 export const col = (t: TableInfo, name: string): ColumnInfo => {

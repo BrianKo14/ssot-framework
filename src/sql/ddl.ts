@@ -1,6 +1,7 @@
 // The schema generator
 
 import type { ColumnInfo, TableInfo } from '../schema/model.js';
+import { stored } from '../schema/stamp.js';
 import {
 	canonicalType, checkedName, checkedSchema, columnList, DEFAULT_SCHEMA, generatedName, q, qualified,
 	storageType, tableRef,
@@ -228,12 +229,13 @@ function columnTarget(t: TableInfo, c: ColumnInfo): Target {
 /** The table w/ everything that goes inside. */
 function tableTarget(t: TableInfo, taken: Set<string>): Target {
 	const keys = keyConstraints(t, taken);
+	const columns = stored(t);			// the described columns, plus the row version
 
 	return {
 		key: objectKey('table', t.schema, t.table),
 		sql: `create table ${tableRef(t)} (\n  `
-			+ [...t.columns.map(columnDefinition), ...keys.map(inline)].join(',\n  ') + `\n)`,
-		parts: [...t.columns.map(c => columnTarget(t, c)), ...keys.map(c => constraintTarget(t, c))],
+			+ [...columns.map(columnDefinition), ...keys.map(inline)].join(',\n  ') + `\n)`,
+		parts: [...columns.map(c => columnTarget(t, c)), ...keys.map(c => constraintTarget(t, c))],
 	};
 }
 

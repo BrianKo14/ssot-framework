@@ -6,6 +6,7 @@ import { formatMeta } from '../format/registry.js';
 import { DEFAULT_OP, operatorMeta } from '../sql/filter.js';
 import { allows, CAPABILITIES } from '../schema/access.js';
 import type { ColumnInfo, ReferenceInfo, TableInfo } from '../schema/model.js';
+import { STAMP } from '../schema/stamp.js';
 
 /** Name of the metadata endpoint. */
 export const META = '_meta';
@@ -30,7 +31,7 @@ const tableMeta = (t: TableInfo): Omit<TableMeta, 'capabilities' | 'references'>
 	({ entity: t.entity, pk: t.pk.map(c => c.name), columns: t.columns.map(columnMeta) });
 
 
-export function metaRouter(tables: TableInfo[]): Router {
+export function metaRouter(tables: TableInfo[], pollSeconds: number): Router {
 
 	/** A list of all tables, with their metadata and references */
 	const described = tables.map(t =>
@@ -47,11 +48,13 @@ export function metaRouter(tables: TableInfo[]): Router {
 				capabilities: CAPABILITIES.filter(c => allows(t.access, role, c)),
 			}));
 
-		res.json({ 
+		res.json({
 			tables: visible,
 			operators: operatorMeta,
 			defaultOperator: DEFAULT_OP,
-			formats: formatMeta
+			formats: formatMeta,
+			stamp: STAMP.name,
+			pollSeconds,
 		} satisfies SystemMeta);
 	});
 }

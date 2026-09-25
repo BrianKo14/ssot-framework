@@ -1,4 +1,6 @@
-import type { Capability, ColumnMeta, FormatMeta, ReferenceMeta, SystemMeta, TableMeta } from '../shared/api.js';
+import type {
+	Capability, ColumnMeta, FormatMeta, ReferenceMeta, SystemMeta, TableMeta, Viewer,
+} from '../shared/api.js';
 import { actionMenu, type Action, type ActionMenu } from './actions.js';
 import { ancestryPicker, type AncestryPicker } from './ancestry.js';
 import { api, ApiError, sending } from './api.js';
@@ -11,6 +13,7 @@ import {
 	reachedColumn, reachedName, referencesOf, targetOf, valuesFrom, valuesOf,
 } from './fk.js';
 import { picker, type Picker } from './picker.js';
+import { watching, type Watch } from './presence.js';
 import { filterQuery, type Listing, listPath, rowPath } from './query.js';
 import { router, same, type Router, type View } from './route.js';
 
@@ -82,6 +85,19 @@ const key = (t: TableMeta, row: Row) => valuesOf(t.pk, row);
 
 /** Where a row of `t` is read and written: `rowPath` addressed by the row's own key. */
 const rowAt = (t: TableMeta, row: Row, listing?: Listing) => rowPath(t.entity, key(t, row), listing);
+
+/** What the server answers a write with when the row it addresses is no longer the row that was
+    read (SCOPE 6f). It is the one refusal that is about *when* the write was made, not about
+    what it said, so it is the one the screen answers by reloading rather than by marking a field. */
+const stale = (err: unknown) => err instanceof ApiError && err.status === 412;
+
+const CHANGED = 'El registro cambió; se recargó con los valores actuales.';
+
+/** Reads the row again into the object the screen is holding. When the server has refused a
+    write for being late, showing what is actually there is the whole of the answer. */
+const reread = async (s: Sheet, row: Row): Promise<void> => {
+	Object.assign(row, await api<Row>(rowAt(s.t, row, { reached: reached(s.columns) })));
+};
 
 
 // --- Rendering ---
@@ -189,7 +205,7 @@ const cell = (s: Sheet, row: Row) => (sh: Reachable) => {
 	if (!writable(s.t, column)) return td;
 
 	td.classList.add('editable');
-	td.addEventListener('dblclick', () => edit(s, row, column, td));
+	td.addEventListener('dblclick', () => void enter(s, row, column, td));
 
 	return td;
 };
@@ -308,8 +324,14 @@ const jump = (t: TableMeta, row: Row) => {
 };
 
 /** The one place a row's cells are written. Keeps the lead cell rather than rebuilding it,
-    so the peek's reference to its button (which marks the row open) survives. */
+    so the peek's reference to its button (which marks the row open) survives — and with it any
+    mark another viewer's cursor has left there.
+
+    The row's key goes on the line as well. It is the one thing the DOM is told about a row's
+    identity, and it is here because this is where a row is written: a viewer's cursor is
+    answered as the address writes a key, so the two can be compared without asking again. */
 const fill = (tr: HTMLTableRowElement, s: Sheet, row: Row) => {
+	tr.dataset.at = key(s.t, row).join('/');
 	tr.replaceChildren(tr.querySelector('.lead') ?? lead('td', s.handle(row)), ...s.columns.map(cell(s, row)));
 
 	return tr;
@@ -364,6 +386,51 @@ const grants = (t: TableMeta) => {
 };
 
 
+// --- Who else is here (SCOPE 6c, 6d) ---
+
+/** The others on this screen, as the last poll answered. Kept because the grid is redrawn far
+    more often than the poll answers, and a redraw must not blank what is true. */
+let seen: Viewer[] = [];
+
+/** Counted beside the screen's name. */
+const watchers = classed('p', 'watchers');
+
+/** Draws them twice over: how many are here, beside the heading, and who is on which record,
+    on the line that record is drawn on. The count alone would say something is going on without
+    saying where; the marks are what make it answerable. */
+const drawViewers = () => {
+	watchers.hidden = seen.length === 0;
+	watchers.textContent = `${seen.length} viendo`;
+	watchers.title = seen.length
+		? `Otros con ${screen?.entity ?? ''} abierto:\n`
+			+ seen.map(v => `${v.user}${v.record === null ? '' : ` · ${v.record}`}`).join('\n')
+		: '';
+
+	const cursors = new Map<string, string[]>();
+
+	for (const { user, record } of seen)
+		if (record !== null) cursors.set(record, [...cursors.get(record) ?? [], user]);
+
+	for (const tr of gridRows.querySelectorAll<HTMLTableRowElement>('tr[data-at]')) {
+		const who = cursors.get(String(tr.dataset.at)) ?? [];
+
+		tr.querySelector('.watcher')?.remove();
+		tr.classList.toggle('watched', who.length > 0);
+
+		if (!who.length) continue;
+
+		// The leading column is 2.25rem wide and sticky, so the mark says who in the space of a
+		// letter — one initial, or how many when there are several — and names them on hover.
+		const mark = classed('span', 'watcher', who.length === 1 ? who[0].slice(0, 1) : String(who.length));
+
+		mark.title = `${who.join(', ')} · acá`;
+		tr.querySelector('.lead')?.append(mark);
+	}
+};
+
+const showViewers = (viewers: Viewer[]) => { seen = viewers; drawViewers(); };
+
+
 // --- Row peek ---
 
 /** What the side panel is showing: a record the grid drew, or a row being drafted for insert.
@@ -406,6 +473,8 @@ const closePeek = (restore = false) => {
 	peekDetails.hidden = true;
 	peekDetailRows.replaceChildren();	// so reopening never flashes the last record's rows
 	dropPickers();
+
+	watch.at(screen?.entity ?? null, []);	// the cursor is back on the grid, on no record in particular
 
 	if (restore && was) route.mark(here());
 };
@@ -457,6 +526,7 @@ function show(what: Peeked): void {
 	what.landing().focus();
 
 	route.mark(here(what.key));		// the screen already shows it; the address only says so
+	watch.at(what.t.entity, what.key);	// an open record is where this tab's cursor is
 }
 
 /** Save and Cancel are enabled only while the panel disagrees with the row it is showing. */
@@ -488,6 +558,10 @@ async function savePeek(): Promise<void> {
 		await opened.save(typed);
 	} catch (err) {
 		if (sessionEnded(err)) { location.reload(); return; }
+
+		// the row was re-read on the way here, so rebuilding the fields shows what is there now —
+		// and it is a rebuild, not a note under a box: nothing the user typed was wrong
+		if (stale(err)) { fillPeek(); say(CHANGED, 'error'); return; }
 
 		const failed = err instanceof ApiError ? err.fields : undefined;
 
@@ -532,9 +606,10 @@ async function removePeek(): Promise<void> {
 	} catch (err) {
 		if (sessionEnded(err)) { location.reload(); return; }
 
-		// e.g. a row a detail still points at — names no field, so it goes on the status line
+		// e.g. a row a detail still points at — names no field, so it goes on the status line.
+		// A late delete has already put the panel right on its way here; only the wording is left.
 		disarmDelete();
-		say((err as Error).message, 'error');
+		say(stale(err) ? CHANGED : (err as Error).message, 'error');
 	}
 }
 
@@ -542,6 +617,13 @@ async function removePeek(): Promise<void> {
 const record = (s: Sheet, row: Row, button: HTMLButtonElement): Peeked => {
 	const { t } = s;
 	const id = key(t, row);
+
+	/** The row's line on the grid behind the panel, put back the way the row now reads. */
+	const redraw = () => {
+		const tr = button.closest('tr');
+
+		if (tr?.isConnected) fill(tr, s, row);
+	};
 
 	return {
 		t, row, button,
@@ -553,16 +635,30 @@ const record = (s: Sheet, row: Row, button: HTMLButtonElement): Peeked => {
 		required: c => !c.nullable,		// a default fills what an insert omits, not what an update blanks
 		landing: () => peekClose,
 		save: async typed => {
-			await patched(s, row, typed);
-
-			const tr = button.closest('tr');
-			if (tr?.isConnected) fill(tr, s, row);
+			// whatever the answer was, the row object now holds what the server holds — either
+			// what it wrote or, when it refused a late write, what it had. So the line is redrawn
+			// either way and neither outcome needs its own copy of this.
+			try {
+				await patched(s, row, typed);
+			} finally {
+				redraw();
+			}
 
 			fillPeek();
 			say(summary(s));
 		},
 		remove: async () => {
-			await api<void>(rowAt(t, row), sending('DELETE'));
+			try {
+				await api<void>(rowAt(t, row), sending('DELETE', undefined, row[stamp]));
+			} catch (err) {
+				if (!stale(err)) throw err;
+
+				await reread(s, row).catch(() => undefined);	// deleting what someone else changed is refused too
+				redraw();
+				fillPeek();
+
+				throw err;
+			}
 
 			// back to the list; drawing it again is what stops the address naming a gone row
 			closePeek();
@@ -578,7 +674,18 @@ const record = (s: Sheet, row: Row, button: HTMLButtonElement): Peeked => {
     The one place a written row is put back, so a cell edit and the panel cannot disagree. */
 async function patched(s: Sheet, row: Row, body: Row): Promise<void> {
 	const { t } = s;
-	const saved = await api<Row>(rowAt(t, row), sending('PATCH', body));
+	let saved: Row;
+
+	try {
+		// the version the row was read at goes with it, so a row that moved on in between
+		// refuses the write instead of taking it (SCOPE 7c)
+		saved = await api<Row>(rowAt(t, row), sending('PATCH', body, row[stamp]));
+	} catch (err) {
+		// the refusal is the news; a re-read that also fails must not replace it
+		if (stale(err)) await reread(s, row).catch(() => undefined);
+
+		throw err;
+	}
 
 	Object.assign(row, saved);			// keep what the server returned, not the typed text
 
@@ -779,6 +886,33 @@ const insertDetailRow: Action = {
 /** The cell being edited — one at a time, so opening another can call it off. */
 let editing: { td: HTMLTableCellElement; cancel: () => void } | null = null;
 
+/** Opening an editor is the last moment before something is typed over a row, so it is where the
+    row is asked whether it is still the row that was read (SCOPE 6c). It costs one read and it
+    buys a refusal that lands before anything is typed rather than after: a record that moved on
+    never opens, it redraws. Past this point the row is left alone until the editor closes —
+    a value replaced under someone mid-word is worse than a stale one. */
+async function enter(s: Sheet, row: Row, c: ColumnMeta, td: HTMLTableCellElement): Promise<void> {
+	if (editing?.td === td) return;			// a double-click *inside* the open editor selects a word
+
+	const read = row[stamp];
+
+	try {
+		await reread(s, row);
+	} catch (err) {
+		failSoftly(err as Error);		// no answer about the row is no ground to write over it
+		return;
+	}
+
+	if (read === row[stamp]) { edit(s, row, c, td); return; }
+
+	const tr = td.closest('tr');
+
+	if (tr?.isConnected) fill(tr, s, row);
+
+	refreshPeek(s.t, row);
+	say(CHANGED, 'error');
+}
+
 /** A cell opens into one text box for every type — no per-type widget needed. Empty is `null`;
     an fk column gets the same box plus a list beside it, see `picker.ts`. */
 function edit(s: Sheet, row: Row, c: ColumnMeta, td: HTMLTableCellElement): void {
@@ -837,6 +971,12 @@ function edit(s: Sheet, row: Row, c: ColumnMeta, td: HTMLTableCellElement): void
 		} catch (err) {
 			if (sessionEnded(err)) { location.reload(); return; }
 
+			// A late write is the one refusal the editor does not stay open for: what is in the
+			// box is an answer to values that are gone. `restore` is already "put the cell back
+			// the way the row says it is", and `patched` has just made the row say what the
+			// server says — so the editor closes and the line redraws, and neither is new code.
+			if (stale(err)) { restore(); refreshPeek(t, row); say(CHANGED, 'error'); return; }
+
 			settled = false;		// still on screen and still refused: let it be fixed
 			input.disabled = false;
 			input.focus();
@@ -856,6 +996,11 @@ function edit(s: Sheet, row: Row, c: ColumnMeta, td: HTMLTableCellElement): void
 
 	td.classList.add('editing');
 	td.replaceChildren(input);
+
+	// editing a cell is being on that record, which is what a cursor is — but only on the screen's
+	// own grid: a subtable's row belongs to another screen, and saying so there would answer the
+	// count and the marks with a different table's viewers
+	if (s.t === screen) watch.at(s.t.entity, key(s.t, row));
 
 	// after the cell holds the box, so the list is not swept out with what the cell held before
 	if (fk) list = picker(input, td, fk.ref, fk.target, values => void commit(values));
@@ -885,6 +1030,8 @@ let screen: TableMeta | null = null;
 
 /** Built in `main`, once `_meta` has answered. */
 let defaultOp!: string;
+let stamp!: string;
+let watch!: Watch;
 let filters!: FilterBar;
 let inserts!: ActionMenu;
 let exports!: ActionMenu;
@@ -917,6 +1064,7 @@ async function load(s: Sheet): Promise<Row[]> {
 		listPath(s.t.entity, { filter: filters.query(), reached: reached(s.columns) }));
 
 	renderSheet(s, data);
+	drawViewers();				// the lines are new; who is on them is not
 	say(summary(s));
 
 	return data;
@@ -945,8 +1093,9 @@ async function draw(): Promise<void> {
 	for (const a of nav.querySelectorAll('a'))
 		a.setAttribute('aria-current', String(a.dataset.entity === t.entity));
 
-	heading.replaceChildren(t.entity, grants(t));
+	heading.replaceChildren(t.entity, grants(t), watchers);
 	screen = t;
+	watch.at(t.entity, []);			// a record the address names announces itself when it opens
 	filters.reset(t, view.conditions);
 	inserts.reset(t);
 	exports.reset(t);
@@ -1003,6 +1152,8 @@ async function main(): Promise<void> {
 	if (!tables.length) { say('No hay entidades disponibles para este usuario.'); return; }
 
 	defaultOp = meta.defaultOperator;
+	stamp = meta.stamp;
+	watch = watching(meta.pollSeconds, showViewers);
 	filters = filterBar(tables, meta.operators, refilter);
 	inserts = actionMenu('Insertar', [insertRow, ancestorField]);
 	exports = actionMenu('Exportar', meta.formats.map(saveAs), { className: 'exports', iconOnly: true });

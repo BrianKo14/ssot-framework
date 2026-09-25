@@ -46,9 +46,11 @@ DATABASE_URL=postgres://app:app@localhost:5433/appdb
 PORT=3000
 ```
 
-`DATABASE_URL` is required. `PORT` defaults to `3000` if omitted. Two more
+`DATABASE_URL` is required. `PORT` defaults to `3000` if omitted. Three more
 are optional: `SESSION_TTL` (login session lifetime, ISO-8601 duration,
-default `PT8H`) and `COOKIE_SECURE` (`true`/`false`, default `false`).
+default `PT8H`), `COOKIE_SECURE` (`true`/`false`, default `false`) and
+`PRESENCE_POLL` (seconds between a screen's "who else is here" polls, default
+`5`; a tab stops being counted after three of them go unanswered).
 
 ### Start the database
 

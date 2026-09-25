@@ -1,8 +1,10 @@
 import { Router, type Request, type RequestHandler } from 'express';
+import type { Presence } from '../auth/presence.js';
 import type { Db } from '../db/postgres.js';
 import { equalities, filterConditions, parseFilter, where } from '../sql/filter.js';
 import { HttpError } from '../errors.js';
 import type { ColumnInfo, ReferenceInfo, TableInfo } from '../schema/model.js';
+import { STAMP, stored } from '../schema/stamp.js';
 import { columnList, q, tableRef } from '../sql/identifier.js';
 import { atBase, parseReached, reading } from '../sql/reach.js';
 import { asRecord, checkedValues, namedColumns, rowValues } from '../schema/values.js';
@@ -35,14 +37,17 @@ const isNestable = (ref: ReferenceInfo) =>
 
 
 
+/** What the poll of a table is called, under that table's own path. */
+const VIEWERS = '_viewers';
+
 /** Generic CRUD router factory.
  * @param master when this table is mounted as a detail, the reference it was mounted through. */
-export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router {
+export function crudRouter(db: Db, t: TableInfo, presence: Presence, master?: ReferenceInfo): Router {
 	const r = Router({ mergeParams: true });	// `mergeParams` lets the detail's router see the master's path parameters
 
 	r.use(permit(t));				// first thing: authorization gate
 
-	const cols = columnList(t.columns);
+	const cols = columnList(stored(t));		// what a write hands back: the columns, and the version they are now at
 	const table = tableRef(t);
 	const pkCols = columnList(t.pk);
 
@@ -73,9 +78,42 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 		return { ...given, ...Object.fromEntries(fromMaster.map(([name, param]) => [name, req.params[param]])) };
 	};
 
-	/** Instead of letting Postgres convert row data to typed values, this code does that conversion
-	 * itself in TypeScript, using each column's own type handler. */
-	const wire = (row: Record<string, unknown>) => rowValues(t.columns, row);
+	/** Stamped with the row's version. */
+	const stamped = (columns: ColumnInfo[], row: Record<string, unknown>): Record<string, unknown> =>
+		({ ...rowValues(columns, row), [STAMP.name]: String(row[STAMP.name]) });
+	const wire = (row: Record<string, unknown>) => stamped(t.columns, row);
+
+	/** Gets `If-Match` header.
+	 * @returns parsed version, or null if none was presented.
+	 * @throws 400 if the header is present but invalid. */
+	const presentedVersion = (req: Request): unknown => {
+		const raw = req.get('If-Match');
+
+		if (raw === undefined) return null;
+
+		const checked = STAMP.type.check(raw.replace(/^"(.*)"$/, '$1'));
+
+		if (!checked.ok) throw new HttpError(400, `If-Match must be ${STAMP.type.expected}`);
+
+		return checked.value;
+	};
+
+	/** Adds the version to the query parameters if it was given. */
+	const unchanged = (version: unknown, params: unknown[]): string[] =>
+		version === null ? [] : equalities({ [STAMP.name]: version }, params);
+
+	/** Decide the reason why a write failed to match any row. */
+	const refuseUnmatched = async (req: Request, version: unknown): Promise<never> => {
+		if (version === null) throw new HttpError(404, 'not found');
+
+		const params: unknown[] = [];
+		const addressed = where(equalities(addressedRow(req), params));
+		const rows = await db.query(`select 1 from ${table}${addressed}`, params);
+
+		throw rows.length
+			? new HttpError(412, 'the record changed since it was read')
+			: new HttpError(404, 'not found');
+	};
 
 
 	// --- ENDPOINTS ---
@@ -91,9 +129,9 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 		const filtered = where(filterConditions(read.byName, raw, params, read.at));
 
 		const rows = await db.query(
-			`${read.statement(columns, filtered)} order by ${read.order}`, params);	// sort by primary key
+			`${read.statement([...columns, STAMP], filtered)} order by ${read.order}`, params);	// sort by primary key
 
-		return { columns, rows: rows.map(row => rowValues(columns, row)) };
+		return { columns, rows: rows.map(row => stamped(columns, row)) };
 	};
 
 	// GET /[?filter={"col":value,"col2":{"op":"ge","value":…},...}][&with=["fk.col",…]][&format=xlsx|txt]
@@ -109,6 +147,26 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 		});
 	}));
 
+	/** Who else has this table open, and on which record.
+	 * A GET request that also writes to refresh the caller's presence.
+	 * Requires only view access. */
+	const watching = (addressed: boolean): RequestHandler => wrap(async (req, res) => {
+		const row = addressed ? addressedRow(req) : null;		     // validated elsewhere
+
+		res.json(await presence.see({
+			tab: req.query.tab,
+			user: req.principal!.username,
+			entity: t.entity,
+			record: row && t.pk.map(c => String(row[c.name])).join('/'), // PK from validated row data
+		}));
+	});
+
+	// GET /_viewers[?tab=…] — before `byPk`, so the name wins over a single-column key
+	r.get(`/${VIEWERS}`, watching(false));
+
+	// GET /:pk0[/:pk1...]/_viewers[?tab=…]
+	r.get(`${byPk}/${VIEWERS}`, watching(true));
+
 	// GET /:pk0[/:pk1...][?with=["fk.col",…]]
 	// SELECT cols FROM table [LEFT JOIN reached...] WHERE pk_col1 = $1 AND pk_col2 = $2 ...
 	r.get(byPk, wrap(async (req, res) => {
@@ -119,11 +177,11 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 		const params: unknown[] = [];
 		const addressed = where(equalities(addressedRow(req), params, atBase));
 
-		const rows = await db.query(read.statement(columns, addressed), params);
+		const rows = await db.query(read.statement([...columns, STAMP], addressed), params);
 
 		if (!rows.length) { res.status(404).json({ error: 'not found' }); return; }
 
-		res.json(rowValues(columns, rows[0]));
+		res.json(stamped(columns, rows[0]));
 	}));
 
 	// POST /
@@ -162,15 +220,19 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 			if (!given.length) { res.status(400).json({ error: 'no updatable columns provided' }); return; }
 
 			const values = checkedValues(given, body, true);
+			const version = presentedVersion(req);
 
 			const params: unknown[] = [];
-			const sets = given.map(c => `${q(c.name)} = $${params.push(values[c.name])}`).join(', ');
-			const addressed = where(equalities(addressedRow(req), params));
+			const sets = [
+				...given.map(c => `${q(c.name)} = $${params.push(values[c.name])}`),
+				`${q(STAMP.name)} = ${q(STAMP.name)} + 1`,	// updated on every write
+			].join(', ');
+			const addressed = where([...equalities(addressedRow(req), params), ...unchanged(version, params)]);
 
 			const rows = await db.query(
 				`update ${table} set ${sets}${addressed} returning ${cols}`, params);
 
-			if (!rows.length) { res.status(404).json({ error: 'not found' }); return; }
+			if (!rows.length) await refuseUnmatched(req, version);
 
 			res.json(wire(rows[0]));
 		});
@@ -184,13 +246,17 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 	// DELETE /:pk0[/:pk1...]
 	// DELETE FROM table WHERE pk_col1 = $1 AND pk_col2 = $2 ...
 	r.delete(byPk, wrap(async (req, res) => {
+		const version = presentedVersion(req);
+
 		const params: unknown[] = [];
-		const addressed = where(equalities(addressedRow(req), params));
+		const addressed = where([...equalities(addressedRow(req), params), ...unchanged(version, params)]);
 
 		const rows = await db.query(
 			`delete from ${table}${addressed} returning ${pkCols}`, params);
 
-		res.status(rows.length ? 204 : 404).end();
+		if (!rows.length) await refuseUnmatched(req, version);
+
+		res.status(204).end();
 	}));
 
 
@@ -200,15 +266,15 @@ export function crudRouter(db: Db, t: TableInfo, master?: ReferenceInfo): Router
 
 
 /** Gather all the CRUD routers for the given tables. Mounted whole at `/api`. */
-export function entityRouter(db: Db, tables: TableInfo[]): Router {
+export function entityRouter(db: Db, tables: TableInfo[], presence: Presence): Router {
 	const r = Router();
 
 	for (const t of tables) {					// per table CRUD router at /api/<table>
-		r.use(`/${t.entity}`, crudRouter(db, t));
+		r.use(`/${t.entity}`, crudRouter(db, t, presence));
 
 		// ...and mount each of its details' collections under it, at /api/<master>/<master key>/<detail>.
 		for (const ref of t.details.filter(isNestable))
-			r.use(`/${t.entity}${detailPath(ref)}`, crudRouter(db, ref.from, ref));
+			r.use(`/${t.entity}${detailPath(ref)}`, crudRouter(db, ref.from, presence, ref));
 	}
 
 	return r;

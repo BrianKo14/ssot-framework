@@ -189,6 +189,24 @@ main > header {
 	letter-spacing: .03em;
 }
 
+/* How many others have this screen open (SCOPE 6d). It sits with the capability badges rather
+   than with the status pill: both say what is true of this screen right now, while the pill
+   says what the screen is doing. Hidden outright at zero — "0 viendo" is noise, and a badge
+   that only appears when someone arrives is the notification. */
+#title .watchers {
+	flex: none;
+	margin: 0;
+	padding: .03125rem .375rem;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--brand) 14%, transparent);
+	color: var(--brand-ink);
+	font-size: .5625rem;
+	font-weight: 600;
+	letter-spacing: .03em;
+	white-space: nowrap;
+	cursor: default;
+}
+
 /* One pill, three states: counts when idle, a spinner while loading, red on failure. */
 #status {
 	display: inline-flex;
@@ -599,6 +617,26 @@ tr.open .lead :is(button, a) { opacity: 1; }
 /* The open row is marked on its handle alone — the row itself never changes colour. */
 tr.open .lead { background: var(--brand-soft); }
 tr.open .lead :is(button, a) { color: var(--brand-ink); }
+
+/* Another cursor sitting on this row (SCOPE 6c/6d). Marked where the row is already marked —
+   its handle — because that is the column that says what is true of a row rather than of its
+   data. It covers the handle while it is at rest, and steps aside on hover so the row can still
+   be opened: what is under the pointer is the thing the pointer came for.
+   No `position: relative` on the cell: it is already `sticky`, which positions it. */
+.watcher {
+	position: absolute;
+	inset: 0;
+	display: grid;
+	place-content: center;
+	background: var(--raised);
+	color: var(--muted);
+	font-size: .625rem;
+	font-weight: 700;
+	text-transform: uppercase;
+	cursor: default;
+}
+tbody tr:hover .watcher { display: none; }
+tr.watched .lead { box-shadow: inset 2px 0 0 var(--muted); }
 
 .null { color: var(--faint); font-style: italic; }
 

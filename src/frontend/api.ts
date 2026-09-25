@@ -38,7 +38,15 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 // The session cookie is sent automatically, so we don't need to include it in the headers.
-export const sending = (method: string, body?: unknown): RequestInit =>
-	body === undefined
-		? { method }
-		: { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
+/** @param version the row's version, when the write is meant for the row that was read and for
+ * no other: it travels as `If-Match`, and a row that has moved on since refuses it (412).
+ * Left out, the write is unconditional — which is what a client knowing nothing of versions
+ * still gets, so nothing that worked before stopped working. */
+export const sending = (method: string, body?: unknown, version?: unknown): RequestInit => {
+	const headers: Record<string, string> = {};
+
+	if (body !== undefined) headers['content-type'] = 'application/json';
+	if (version !== undefined && version !== null) headers['If-Match'] = `"${String(version)}"`;
+
+	return { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) };
+};

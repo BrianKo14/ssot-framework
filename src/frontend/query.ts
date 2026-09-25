@@ -50,3 +50,10 @@ export const listPath = (entity: string, listing: Listing = {}): string =>
 /** The `/:pk0[/:pk1…]` route `crudRouter` mounts: one row, addressed by its key. */
 export const rowPath = (entity: string, key: string[], listing: Listing = {}): string =>
 	[`/api/${encodeURIComponent(entity)}`, ...key.map(encodeURIComponent)].join('/') + asked(listing);
+
+/** What `crudRouter` mounts beside a table's rows and under each of them: who else has this
+ * screen open, and which record their cursor is on (SCOPE 6d). Saying where this tab is and
+ * asking who else is here are the same request, so the tab's own name goes with it — and comes
+ * back from it the first time, when there is none to send yet. */
+export const watchPath = (entity: string, key: string[], tab: string | null): string =>
+	`${rowPath(entity, key)}/_viewers${tab === null ? '' : `?tab=${encodeURIComponent(tab)}`}`;

@@ -68,8 +68,8 @@ export interface Viewer {
 	user: string;
 	/** Which screen they have open. */
 	entity: string;
-	/** The record their cursor is on. Its pk values as the address writes them, or null. */
-	record: string | null;
+	/** The records they are on, each as the address writes its pk values. */
+	records: string[];
 }
 
 /** A held record. */

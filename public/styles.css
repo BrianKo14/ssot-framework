@@ -723,13 +723,18 @@ a.ref:hover { color: var(--brand-ink); text-decoration-color: currentColor; }
    what `Sheet.handle` gives it rather than being told a second time which sheet it is on. The
    declared width is the floor that keeps the empty header cell and a subtable's column steady.
    Everything in here is measured off `--slot` — both controls, and the mark a cursor leaves —
-   so none of the three can drift from the others. */
+   so none of the three can drift from the others.
+
+   `--gutter` is the column's own inset: the column is pinned to the left edge of a box that
+   scrolls, so without it a round mark sits flush against that edge and reads as clipped. It is
+   the column's and not the mark's, so the mark and the handle underneath it move together. */
 .lead {
 	--slot: 1.5rem;
+	--gutter: .25rem;
 	position: sticky;
 	left: 0;
 	width: 2.25rem;
-	padding: 0;
+	padding: 0 0 0 var(--gutter);
 	background: var(--raised);
 	text-align: center;
 	user-select: none;
@@ -813,29 +818,35 @@ tr.watched > td {
    it off the row below — and a row already wearing a colour of its own keeps it. */
 .above-watched > :is(td, th) { border-bottom-color: var(--viewer); }
 
-/* The handle, filled in that tab's own colour — the same fill as its circle — with the initial
-   of whoever is on the row. The column that already says what is true *of a row* rather than of
-   its data now says whose it is, and says it the way the header says it.
+/* The mark a cursor leaves on the line it is on: a circle in that tab's own colour, carrying the
+   initial of whoever is on the row — the same circle the header draws for the same tab, so the
+   column that already says what is true *of a row* rather than of its data now says whose it is,
+   and says it the way the header says it.
    No `position: relative` on the cell: it is already `sticky`, which positions it.
 
-   The fill is the handle's own box and goes no wider, because the latch beside it answers a
-   different question — who is *holding* the record, which outlives any cursor — and one colour
-   spread across both would have the answer to one saying something about the other.
+   It is the handle's slot and goes no wider, because the latch beside it answers a different
+   question — who is *holding* the record, which outlives any cursor — and one colour spread
+   across both would have the answer to one saying something about the other.
 
-   The mark carries no name: the name lives on the circle, and the colour says which circle. */
-tr.watched .lead .handle { background: var(--viewer); color: var(--viewer-ink); opacity: 1; }
+   It carries no name: the name lives on the header's circle, and the colour says which circle.
 
+   The handle underneath keeps its own plain look and its own hover-only showing. Presence and
+   the offer to open the row are two different sentences, and lending the handle this colour had
+   the mark reading as a lit-up button: the letter gave way and the circle stayed, with an expand
+   icon inside it, as if that colour were part of what the control is offering. */
 .watcher {
 	position: absolute;
 	top: 50%;
-	left: calc(50% - var(--slot) / 2);	/* over the handle, wherever the column settles */
+	/* over the handle, wherever the column settles: half the gutter undoes what the inset does to
+	   the cell's own centre, and half a slot steps back from there to the first of the two. */
+	left: calc(50% + (var(--gutter) - var(--slot)) / 2);
 	transform: translate(-50%, -50%);
 	display: grid;
 	place-content: center;
 	width: var(--slot);
 	height: var(--slot);
-	border-radius: 4px;
-	background: var(--viewer);		/* opaque: the handle is lit underneath, and waiting */
+	border-radius: 50%;			/* the same circle the header draws for the same tab */
+	background: var(--viewer);		/* opaque: the handle's slot is underneath, and waiting */
 	color: var(--viewer-ink);
 	font-size: .625rem;
 	font-weight: 700;
@@ -844,9 +855,12 @@ tr.watched .lead .handle { background: var(--viewer); color: var(--viewer-ink); 
 	transition: opacity .12s ease-out;
 }
 
-/* Under the pointer the letter gives way to the handle, which is drawn in the same ink on the
-   same colour — so the cell never changes and nothing appears to vanish as the mouse crosses. */
-tbody tr:hover .watcher { opacity: 0; }
+/* The mark stands aside for the control whose slot it is sitting in, and the pointer has to be on
+   the leading column itself to ask for it — that column is where the intent to open a row is,
+   and a row being read from anywhere else keeps the answer to whose cursor is on it. Aside and
+   not behind: what comes up is the plain handle, because who is looking at the row says nothing
+   about opening it. The mark takes no pointer events, so lying over the cell is not leaving it. */
+td.lead:hover .watcher { opacity: 0; }
 
 @media (prefers-reduced-motion: reduce) { .watcher { transition: none; } }
 
@@ -856,6 +870,12 @@ tbody tr:hover .watcher { opacity: 0; }
    row: what is about to be edited is one value, not the record. */
 td.editable { cursor: cell; }
 td.editable:hover { outline: 1px solid var(--line); outline-offset: -1px; }
+
+/* A line somebody's cursor is on is already drawn, and the ring is not drawn on top of it: it is
+   inset by a pixel, so it lands on the band the row is wearing and the pointer passing across
+   would rub out what the line is saying. The row keeps its colour and the cell says it can be
+   written into the way it already does everywhere else — with the cursor. */
+tr.watched td.editable:hover { outline: none; }
 
 /* The editor is laid over its cell, not placed inside it: an in-flow <input> carries an intrinsic
    width and would widen the column on opening. Out of flow it takes the cell's own box exactly —

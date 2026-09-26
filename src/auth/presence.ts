@@ -18,12 +18,17 @@ const   P_TAB = col(presenceTable, 'tab'),
 	P_USER = col(presenceTable, 'user'),
 	P_ENTITY = col(presenceTable, 'entity'),
 	P_RECORD = col(presenceTable, 'record'),
+	P_OPENED = col(presenceTable, 'opened'),
 	P_SEEN_AT = col(presenceTable, 'seen_at');
 
 /** What the caller supplies. `seen_at` is not here: it is the database's clock. */
-const PRESENTED = [P_TAB, P_USER, P_ENTITY, P_RECORD];
+const PRESENTED = [P_TAB, P_USER, P_ENTITY, P_RECORD, P_OPENED];
 
-const SHOWN = [P_TAB, P_USER, P_ENTITY, P_RECORD];
+const SHOWN = [P_TAB, P_USER, P_ENTITY, P_RECORD, P_OPENED];
+
+/** The set of records a tab is currently on. */
+const occupying = (...places: unknown[]): string[] =>
+	[...new Set(places.filter(p => p !== null && p !== undefined).map(String))];
 
 /** Num. of ID chars from the tab's fingerprint to keep. */
 const ID_CHARS = 12;
@@ -42,8 +47,10 @@ export interface At {
 	user: string;
 	/** The entity being watched, named by the router that serves it — never by the request. */
 	entity: string;
-	/** The record the cursor is on, or null on the grid. */
+	/** The record whose cell is being edited, or null. */
 	record: string | null;
+	/** The record the side panel is showing, or null. */
+	opened: string | null;
 	/** The set of entities the caller may be told about, per their role. */
 	within: string[];
 }
@@ -80,7 +87,7 @@ export function presenceStore(db: Db, pollSeconds: number): Presence {
 	};
 
 	return {
-		async see({ tab, user, entity, record, within }) {
+		async see({ tab, user, entity, record, opened, within }) {
 			const named = tokenType.check(tab);
 			const name = named.ok ? named.value : mintToken();
 
@@ -94,6 +101,7 @@ export function presenceStore(db: Db, pollSeconds: number): Presence {
 				[P_USER.name]: user,
 				[P_ENTITY.name]: entity,
 				[P_RECORD.name]: record,
+				[P_OPENED.name]: opened,
 			}, true));
 
 			const params: unknown[] = [];
@@ -113,13 +121,12 @@ export function presenceStore(db: Db, pollSeconds: number): Presence {
 
 			const viewers: Viewer[] = rows.map(row => {
 				const seen = rowValues(SHOWN, row);
-				const at = seen[P_RECORD.name];
 
 				return {
 					id: digestOf(String(seen[P_TAB.name])).slice(0, ID_CHARS),
 					user: String(seen[P_USER.name]),
 					entity: String(seen[P_ENTITY.name]),
-					record: at === null ? null : String(at),
+					records: occupying(seen[P_RECORD.name], seen[P_OPENED.name]),
 				};
 			});
 

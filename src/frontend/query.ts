@@ -52,8 +52,17 @@ export const rowPath = (entity: string, key: string[], listing: Listing = {}): s
 	[`/api/${encodeURIComponent(entity)}`, ...key.map(encodeURIComponent)].join('/') + asked(listing);
 
 /** What `crudRouter` mounts beside a table's rows and under each of them: who else has this
- * screen open, and which record their cursor is on (SCOPE 6d). Saying where this tab is and
- * asking who else is here are the same request, so the tab's own name goes with it — and comes
- * back from it the first time, when there is none to send yet. */
-export const watchPath = (entity: string, key: string[], tab: string | null): string =>
-	`${rowPath(entity, key)}/_viewers${tab === null ? '' : `?tab=${encodeURIComponent(tab)}`}`;
+ * screen open, and which records they are on (SCOPE 6d). Saying where this tab is and asking
+ * who else is here are the same request, so the tab's own name goes with it — and comes back
+ * from it the first time, when there is none to send yet.
+ *
+ * A tab can be in two places at once: the address carries the record it has a cell open on,
+ * and `opened` the one its panel is showing. Two places, so one of them cannot be the address. */
+export const watchPath = (entity: string, key: string[], opened: string[], tab: string | null): string => {
+	const asking = [
+		...(tab === null ? [] : [`tab=${encodeURIComponent(tab)}`]),
+		...(opened.length ? [`opened=${encodeURIComponent(opened.join('/'))}`] : []),
+	];
+
+	return `${rowPath(entity, key)}/_viewers${asking.length ? `?${asking.join('&')}` : ''}`;
+};

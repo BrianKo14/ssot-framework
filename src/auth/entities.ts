@@ -63,7 +63,8 @@ const entityDefs = defineEntities({ ...inSchema(AUTH_SCHEMA, {
 			tab: { type: 'token' },
 			user: { type: 'username', nullable: false },
 			entity: { type: 'text', nullable: false },
-			record: { type: 'text' },			// where the cursor is, pk values as the address writes them
+			record: { type: 'text' },			// the record whose cell is being edited
+			opened: { type: 'text' },			// the record the side panel is showing
 			seen_at: { type: 'datetime', nullable: false },	// UTC, by the database's clock
 		} satisfies RecordDef<typeof typeDefs>,
 		fks: { user: { entity: `${AUTH_SCHEMA}.user`, fields: { user: 'username' } } },

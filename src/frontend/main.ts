@@ -389,7 +389,21 @@ async function hold(s: Sheet, row: Row, button: HTMLButtonElement): Promise<void
 	say(verb === 'LOCK' ? 'Lockeando…' : 'Liberando…', 'busy');
 
 	try {
-		await api<void>(rowAt(s.t, row), sending(verb));
+		// The answer is the record as it now stands, so claiming one also puts the line right:
+		// a claim is taken to hold what is on screen, and it is no good holding a line that has
+		// moved on. A caller who may not read the record is answered nothing, and merges nothing.
+		const now = await api<Row | null>(rowAt(s.t, row), sending(verb));
+
+		if (now) {
+			Object.assign(row, now);
+
+			const tr = button.closest('tr');
+
+			if (tr?.isConnected) fill(tr, s, row);
+
+			refreshPeek(s.t, row);
+		}
+
 		say(summary(s));
 	} catch (err) {
 		if (sessionEnded(err)) { location.reload(); return; }
@@ -549,9 +563,6 @@ const coloured = (viewers: Viewer[]): Map<string, number> => {
 	return colours;
 };
 
-/** What a circle says when it is hovered: who, and where they are if they are anywhere. */
-const naming = (v: Viewer) => `${v.user}${v.record === null ? '' : ` · ${v.record}`}`;
-
 /** A box that holds circles and keeps the ones that are still wanted.
  *
  * Kept and matched by tab rather than thrown away and built again on every answer: an answer
@@ -572,8 +583,12 @@ const stackOf = (box: HTMLElement) => {
 			const dot = kept.get(v.id) ?? classed('span', 'viewer', v.user.slice(0, 1));
 
 			dot.dataset.colour = String(colours.get(v.id));
-			dot.dataset.name = naming(v);
-			dot.setAttribute('aria-label', naming(v));
+
+			// A circle answers who, and only who. Where they are is already drawn, on the line their
+			// cursor is on and in this same colour — spelling the pk out here said it a second time,
+			// in a form nobody reads a record by, and left the name looking like it had a suffix.
+			dot.dataset.name = v.user;
+			dot.setAttribute('aria-label', v.user);
 			dot.tabIndex = 0;		// so the name can be reached without a pointer
 
 			kept.set(v.id, dot);
@@ -608,7 +623,7 @@ const drawViewers = () => {
 	const cursors = new Map<string, Viewer[]>();
 
 	for (const v of here)
-		if (v.record !== null) cursors.set(v.record, [...cursors.get(v.record) ?? [], v]);
+		for (const at of v.records) cursors.set(at, [...cursors.get(at) ?? [], v]);
 
 	for (const tr of gridRows.querySelectorAll<HTMLTableRowElement>('tr[data-at]')) {
 		const who = cursors.get(String(tr.dataset.at)) ?? [];
@@ -660,7 +675,7 @@ const drawViewers = () => {
 
 /** The records somebody's cursor is on, on the screen being looked at. */
 const holdings = (viewers: Viewer[]): Set<string> =>
-	new Set(viewers.flatMap(v => v.entity === screen?.entity && v.record !== null ? [v.record] : []));
+	new Set(viewers.flatMap(v => v.entity === screen?.entity ? v.records : []));
 
 /** Rows this tab is in the middle of changing.
  *
@@ -1172,8 +1187,10 @@ const insertDetailRow: Action = {
 /** The cell being edited — one at a time, so opening another can call it off. */
 let editing: { td: HTMLTableCellElement; cancel: () => void; at: string[] } | null = null;
 
-/** Where this tab's cursor is, as the screen itself says: the row being edited, or the record
-    the panel holds, or nowhere in particular.
+/** Where this tab is, as the screen itself says: the row being edited, *and* the record the
+    panel holds. Both, because they can be two different records — a panel stays open while a
+    cell is opened on another line — and then this tab really is in two places, so both should
+    be marked on everybody else's screen. Either may be nowhere.
 
     Read here rather than announced by each thing that moves it. Every one of them — opening a
     record, closing it, opening a cell, closing a cell — then says the same sentence, and none
@@ -1181,7 +1198,7 @@ let editing: { td: HTMLTableCellElement; cancel: () => void; at: string[] } | nu
     missing: an editor announced itself on the way in and nothing on the way out, so to everyone
     else the row stayed held until its owner happened to open something else. */
 const cursor = () => {
-	if (screen) watch.at(screen.entity, (editing?.at.length ? editing.at : opened?.key) ?? []);
+	if (screen) watch.at(screen.entity, editing?.at ?? [], opened?.key ?? []);
 };
 
 /** Opening an editor is the last moment before something is typed over a row, so it is where the
@@ -1298,7 +1315,18 @@ function edit(s: Sheet, row: Row, c: ColumnMeta, td: HTMLTableCellElement): void
 		else if (e.key === 'Escape') { e.stopPropagation(); restore(); }	// the peek's Escape must not fire too
 	});
 	input.addEventListener('input', () => list?.refresh());
-	input.addEventListener('blur', () => void commit());
+
+	// Leaving the cell is a decision; losing the window is not one. A blur while the document
+	// itself still has focus is the user having gone somewhere else on this page, and the value
+	// is written. A blur with the window gone — another application, another browser tab — is
+	// nobody having decided anything, so the box stays open with what is half typed still in it,
+	// and takes the caret back when the window comes back. Whoever returns to this page by
+	// clicking something else in it lands on the second blur, which is the decision.
+	input.addEventListener('blur', () => {
+		if (document.hasFocus()) { void commit(); return; }
+
+		addEventListener('focus', () => { if (!settled && td.isConnected) input.focus(); }, { once: true });
+	});
 
 	td.classList.add('editing');
 	td.replaceChildren(input);
@@ -1419,7 +1447,7 @@ async function draw(): Promise<void> {
 
 	heading.replaceChildren(t.entity, grants(t));
 	screen = t;
-	watch.at(t.entity, []);			// a record the address names announces itself when it opens
+	watch.at(t.entity, [], []);		// a record the address names announces itself when it opens
 	filters.reset(t, view.conditions);
 	inserts.reset(t);
 	exports.reset(t);

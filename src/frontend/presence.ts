@@ -6,17 +6,19 @@ import { sessionEnded } from './auth.js';
 import { watchPath } from './query.js';
 import { same } from './route.js';
 
-/** Where this tab is: a screen, and the record its cursor is on. */
+/** Where this tab is: a screen, the record it has a cell open on, and the one its panel is
+ * showing. Two records, because it can be on both at once and each should be marked. */
 interface Where {
 	entity: string;
 	record: string[];
+	opened: string[];
 }
 
 export interface Watch {
 	/** Says where this tab is now, and asks at once rather than waiting for the next round —
 	 * a screen that has just been opened should not look empty for a poll.
 	 * @param entity null when there is no screen; then nothing is announced at all. */
-	at(entity: string | null, record: string[]): void;
+	at(entity: string | null, record: string[], opened: string[]): void;
 
 	/** Asks again at once, without having moved. For when this tab has just changed something
 	 * the answer reports — a claim taken or let go — and should not wait a round to see it. */
@@ -29,7 +31,8 @@ export interface Watch {
 /** Is this the same place as that one? Two announcements of the same position say nothing new,
  * and a tab that says nothing new should not ask again. */
 const alike = (a: Where | null, b: Where | null): boolean =>
-	a === b || (a !== null && b !== null && a.entity === b.entity && same(a.record, b.record));
+	a === b || (a !== null && b !== null && a.entity === b.entity
+		&& same(a.record, b.record) && same(a.opened, b.opened));
 
 /** Where a tab's name is kept so that refreshing the page does not make it a different tab.
  *
@@ -73,7 +76,7 @@ export function watching(seconds: number, drawn: (viewers: Viewer[], locks: Lock
 		asking = true;
 
 		try {
-			const seen = await api<Watching>(watchPath(asked.entity, asked.record, tab));
+			const seen = await api<Watching>(watchPath(asked.entity, asked.record, asked.opened, tab));
 
 			if (seen.tab !== tab) { tab = seen.tab; remember(tab); }	// only what a new name costs
 
@@ -100,8 +103,8 @@ export function watching(seconds: number, drawn: (viewers: Viewer[], locks: Lock
 	addEventListener('visibilitychange', () => { if (!document.hidden) void ask(); });
 
 	return {
-		at(entity, record) {
-			const moved = entity === null ? null : { entity, record };
+		at(entity, record, opened) {
+			const moved = entity === null ? null : { entity, record, opened };
 
 			if (alike(where, moved)) return;		// nothing new to say
 

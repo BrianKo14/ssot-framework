@@ -1,4 +1,4 @@
-import { Router, type Request, type RequestHandler } from 'express';
+import { Router, type Request, type RequestHandler, type Response } from 'express';
 import type { Presence } from '../auth/presence.js';
 import type { Db } from '../db/postgres.js';
 import { equalities, filterConditions, parseFilter, where } from '../sql/filter.js';
@@ -165,18 +165,36 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, master?: Refe
 		});
 	}));
 
+	/** A record's address, checked by the pk's handler. */
+	const addressOf = (row: Record<string, unknown>) => t.pk.map(c => String(row[c.name])).join('/');
+
 	/** A list of all the records that are currently locked. */
 	const claims = async (): Promise<Lock[]> => {
 		const rows = await db.query(
 			`select ${pkCols}, ${q(LOCK.name)} from ${table} where ${q(LOCK.name)} is not null`);
 
 		return rows.map(row => ({
-			record: t.pk.map(c => String(row[c.name])).join('/'),
+			record: addressOf(row),
 			holder: String(row[LOCK.name]),
 		}));
 	};
 
-	/** Who else has this table open, on which record + what is held.
+	/** Record opened in the side panel. */
+	const openedRecord = (raw: unknown): string | null => {
+		if (typeof raw !== 'string' || raw === '') return null;
+
+		const parts = raw.split('/');
+
+		if (parts.length !== t.pk.length) return null;
+
+		try {
+			return addressOf(checkedValues(t.pk, Object.fromEntries(t.pk.map((c, i) => [c.name, parts[i]])), true));
+		} catch {
+			return null;						     // not a key of this table
+		}
+	};
+
+	/** Who else has this table open, on which records + what is held.
 	 * A GET request that also writes to refresh the caller's presence.
 	 * Requires only view access. */
 	const watching = (addressed: boolean): RequestHandler => wrap(async (req, res) => {
@@ -187,7 +205,8 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, master?: Refe
 				tab: req.query.tab,
 				user: req.principal!.username,
 				entity: t.entity,
-				record: row && t.pk.map(c => String(row[c.name])).join('/'), // PK from validated row data
+				record: row && addressOf(row),				     // PK from validated row data
+				opened: openedRecord(req.query.opened),
 				within: presence.readable(req),				     // every screen this role may open
 			}),
 			claims(),
@@ -315,6 +334,12 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, master?: Refe
 			: new HttpError(403, `not allowed to take somebody else's claim on ${t.entity}`);
 	};
 
+	/** The answer to a claim route, with the record's current version. */
+	const claimAnswer = (req: Request, res: Response, row: Record<string, unknown>) => {
+		if (readableBy(req)(t)) res.json(wire(row));
+		else res.status(204).end();
+	};
+
 	// LOCK /:pk0[/:pk1...] — claim the record, so that nobody else may write it
 	r.lock(byPk, wrap(async (req, res) => {
 		const params: unknown[] = [];
@@ -322,11 +347,11 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, master?: Refe
 		const addressed = where([...equalities(addressedRow(req), params), ...unheld(req, params)]);
 
 		const rows = await db.query(
-			`update ${table} set ${set}${addressed} returning ${pkCols}`, params);
+			`update ${table} set ${set}${addressed} returning ${cols}`, params);
 
 		if (!rows.length) await refuseUnmatched(req, null);	// gone, or somebody else's
 
-		res.status(204).end();
+		claimAnswer(req, res, rows[0]);
 	}));
 
 	// UNLOCK /:pk0[/:pk1...] — let the claim go.
@@ -341,11 +366,11 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, master?: Refe
 		]);
 
 		const rows = await db.query(
-			`update ${table} set ${q(LOCK.name)} = null${addressed} returning ${pkCols}`, params);
+			`update ${table} set ${q(LOCK.name)} = null${addressed} returning ${cols}`, params);
 
 		if (!rows.length) await refuseUnclaimed(req);
 
-		res.status(204).end();
+		claimAnswer(req, res, rows[0]);
 	}));
 
 	return r;

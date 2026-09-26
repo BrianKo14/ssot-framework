@@ -1,4 +1,5 @@
 import { Router, type Request, type RequestHandler, type Response } from 'express';
+import { type Changes, changeStore, forgetting, logging, UNDO } from '../auth/changes.js';
 import type { Presence } from '../auth/presence.js';
 import type { Db } from '../db/postgres.js';
 import { equalities, filterConditions, parseFilter, where } from '../sql/filter.js';
@@ -41,6 +42,9 @@ const isNestable = (ref: ReferenceInfo) =>
 /** What the poll of a table is called, under that table's own path. */
 const VIEWERS = '_viewers';
 
+/** What a record's history is called, under that record's own path. */
+const CHANGES = '_changes';
+
 /** Presence + the set of entities the caller may be told about. */
 export interface Seeing {
 	see: Presence['see'];
@@ -49,7 +53,7 @@ export interface Seeing {
 
 /** Generic CRUD router factory.
  * @param master when this table is mounted as a detail, the reference it was mounted through. */
-export function crudRouter(db: Db, t: TableInfo, presence: Seeing, master?: ReferenceInfo): Router {
+export function crudRouter(db: Db, t: TableInfo, presence: Seeing, changes: Changes, master?: ReferenceInfo): Router {
 	const r = Router({ mergeParams: true });	// `mergeParams` lets the detail's router see the master's path parameters
 
 	r.use(permit(t));				// first thing: authorization gate
@@ -85,10 +89,22 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, master?: Refe
 		return { ...given, ...Object.fromEntries(fromMaster.map(([name, param]) => [name, req.params[param]])) };
 	};
 
+	/** A record's address, checked by the pk's handler. */
+	const addressOf = (row: Record<string, unknown>) => t.pk.map(c => String(row[c.name])).join('/');
+
 	/** Stamped with the row's version. */
 	const stamped = (columns: ColumnInfo[], row: Record<string, unknown>): Record<string, unknown> =>
 		({ ...rowValues(columns, row), [STAMP.name]: String(row[STAMP.name]) });
-	const wire = (row: Record<string, unknown>) => stamped(t.columns, row);
+
+	/** The rows as they go out.
+	 * Columns + version + last overwrite. */
+	const sent = async (columns: ColumnInfo[], rows: Record<string, unknown>[]) => {
+		const undoable = await changes.newest(t.entity, rows.map(addressOf));
+
+		return rows.map(row => ({ ...stamped(columns, row), [UNDO]: undoable.get(addressOf(row)) ?? {} }));
+	};
+
+	const wire = async (row: Record<string, unknown>) => (await sent(t.columns, [row]))[0];
 
 	/** Gets `If-Match` header.
 	 * @returns parsed version, or null if none was presented.
@@ -149,7 +165,7 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, master?: Refe
 		const rows = await db.query(
 			`${read.statement([...columns, STAMP], filtered)} order by ${read.order}`, params);	// sort by primary key
 
-		return { columns, rows: rows.map(row => stamped(columns, row)) };
+		return { columns, rows: await sent(columns, rows) };
 	};
 
 	// GET /[?filter={"col":value,"col2":{"op":"ge","value":…},...}][&with=["fk.col",…]][&format=xlsx|txt]
@@ -164,9 +180,6 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, master?: Refe
 			rows,
 		});
 	}));
-
-	/** A record's address, checked by the pk's handler. */
-	const addressOf = (row: Record<string, unknown>) => t.pk.map(c => String(row[c.name])).join('/');
 
 	/** A list of all the records that are currently locked. */
 	const claims = async (): Promise<Lock[]> => {
@@ -221,6 +234,31 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, master?: Refe
 	// GET /:pk0[/:pk1...]/_viewers[?tab=…]
 	r.get(`${byPk}/${VIEWERS}`, watching(true));
 
+	/** The column a history is about (when it's about one column and not a whole record). */
+	const askedField = (raw: unknown): string | null => {
+		if (raw === undefined) return null;
+
+		if (typeof raw !== 'string') throw new HttpError(400, `${CHANGES}: field must name one column`);
+
+		return namedColumns(t.byName, { [raw]: null })[0].name;
+	};
+
+	// GET /:pk0[/:pk1...]/_changes[?field=<column>] — the record's history, newest first.
+	r.get(`${byPk}/${CHANGES}`, wrap(async (req, res) => {
+		const field = askedField(req.query.field);	
+		const record = addressedRow(req);
+
+		// Postgres quirk fix: we cast columns to text so booleans print as `true`/`false` rather than `t`/`f`
+		const params: unknown[] = [];
+		const [now] = await db.query(
+			`select ${columnList(t.columns, c => `${q(c.name)}::text as ${q(c.name)}`)}`
+			+ ` from ${table}${where(equalities(record, params))}`, params);
+
+		if (now === undefined) { res.status(404).json({ error: 'not found' }); return; }
+
+		res.json(await changes.history(t.entity, addressOf(record), field, now));
+	}));
+
 	// GET /:pk0[/:pk1...][?with=["fk.col",…]]
 	// SELECT cols FROM table [LEFT JOIN reached...] WHERE pk_col1 = $1 AND pk_col2 = $2 ...
 	r.get(byPk, wrap(async (req, res) => {
@@ -235,7 +273,7 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, master?: Refe
 
 		if (!rows.length) { res.status(404).json({ error: 'not found' }); return; }
 
-		res.json(stamped(columns, rows[0]));
+		res.json((await sent(columns, rows))[0]);
 	}));
 
 	// POST /
@@ -257,7 +295,7 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, master?: Refe
 			given.map(c => values[c.name])
 		);
 
-		res.status(201).json(wire(rows[0]));				            // return the newly created row, including the primary key
+		res.status(201).json(await wire(rows[0]));			            // return the newly created row, including the primary key
 	}));
 
 	const updatable = t.columns.filter(c => !t.pk.includes(c));
@@ -284,18 +322,21 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, master?: Refe
 				`${q(STAMP.name)} = ${q(STAMP.name)} + 1`,	// updated on every write
 			].join(', ');
 
+			const at = equalities(addressedRow(req), params);
 			const addressed = where([
-				...equalities(addressedRow(req), params),
+				...at,
 				...unchanged(version, params),
 				...unheld(req, params),
 			]);
 
+			const write = `update ${table} set ${sets}${addressed} returning ${cols}`;
+
 			const rows = await db.query(
-				`update ${table} set ${sets}${addressed} returning ${cols}`, params);
+				logging({ t, given, addressed: at, by: holder(req), params }, write, cols), params);
 
 			if (!rows.length) await refuseUnmatched(req, version);
 
-			res.json(wire(rows[0]));
+			res.json(await wire(rows[0]));
 		});
 
 	// PUT /:pk0[/:pk1...] — full update, omitted columns set to null
@@ -316,8 +357,9 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, master?: Refe
 			...unheld(req, params),
 		]);
 
-		const rows = await db.query(
-			`delete from ${table}${addressed} returning ${pkCols}`, params);
+		const remove = `delete from ${table}${addressed} returning ${pkCols}`;
+
+		const rows = await db.query(forgetting(t, params, remove, pkCols), params);
 
 		if (!rows.length) await refuseUnmatched(req, version);
 
@@ -335,8 +377,8 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, master?: Refe
 	};
 
 	/** The answer to a claim route, with the record's current version. */
-	const claimAnswer = (req: Request, res: Response, row: Record<string, unknown>) => {
-		if (readableBy(req)(t)) res.json(wire(row));
+	const claimAnswer = async (req: Request, res: Response, row: Record<string, unknown>) => {
+		if (readableBy(req)(t)) res.json(await wire(row));
 		else res.status(204).end();
 	};
 
@@ -351,7 +393,7 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, master?: Refe
 
 		if (!rows.length) await refuseUnmatched(req, null);	// gone, or somebody else's
 
-		claimAnswer(req, res, rows[0]);
+		await claimAnswer(req, res, rows[0]);
 	}));
 
 	// UNLOCK /:pk0[/:pk1...] — let the claim go.
@@ -370,7 +412,7 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, master?: Refe
 
 		if (!rows.length) await refuseUnclaimed(req);
 
-		claimAnswer(req, res, rows[0]);
+		await claimAnswer(req, res, rows[0]);
 	}));
 
 	return r;
@@ -386,12 +428,14 @@ export function entityRouter(db: Db, tables: TableInfo[], presence: Presence): R
 		readable: req => tables.filter(readableBy(req)).map(t => t.entity),
 	};
 
+	const changes = changeStore(db);
+
 	for (const t of tables) {					// per table CRUD router at /api/<table>
-		r.use(`/${t.entity}`, crudRouter(db, t, seeing));
+		r.use(`/${t.entity}`, crudRouter(db, t, seeing, changes));
 
 		// ...and mount each of its details' collections under it, at /api/<master>/<master key>/<detail>.
 		for (const ref of t.details.filter(isNestable))
-			r.use(`/${t.entity}${detailPath(ref)}`, crudRouter(db, ref.from, seeing, ref));
+			r.use(`/${t.entity}${detailPath(ref)}`, crudRouter(db, ref.from, seeing, changes, ref));
 	}
 
 	return r;

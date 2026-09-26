@@ -1,5 +1,4 @@
-// Who is looking at what, right now (SCOPE 6d).
-// Like `store.ts`, this is the database side of a seam the HTTP layer never reaches around.
+// Who is looking at what right now
 
 import type { Db } from '../db/postgres.js';
 import { checkedValues, rowValues } from '../schema/values.js';
@@ -12,7 +11,7 @@ import { digestOf, mintToken } from './hash.js';
 
 
 // --- Column names ---
-// (Typed once here to avoid security holes from typos, as in `store.ts`.)
+// (To avoid typos)
 
 const   P_TAB = col(presenceTable, 'tab'),
 	P_USER = col(presenceTable, 'user'),
@@ -21,9 +20,7 @@ const   P_TAB = col(presenceTable, 'tab'),
 	P_OPENED = col(presenceTable, 'opened'),
 	P_SEEN_AT = col(presenceTable, 'seen_at');
 
-/** What the caller supplies. `seen_at` is not here: it is the database's clock. */
 const PRESENTED = [P_TAB, P_USER, P_ENTITY, P_RECORD, P_OPENED];
-
 const SHOWN = [P_TAB, P_USER, P_ENTITY, P_RECORD, P_OPENED];
 
 /** The set of records a tab is currently on. */
@@ -40,12 +37,12 @@ const MISSES = 3;
 const PRESENT_FOR = 15;
 
 
-/** Where a tab says it is. */
+/** Where the tab is currently located. */
 export interface At {
-	/** As the client presented it; anything unusable is answered with a new name. */
+	/** Tab identifier, however the browser gives it. */
 	tab: unknown;
 	user: string;
-	/** The entity being watched, named by the router that serves it — never by the request. */
+	/** The entity being watched, named by the router that serves it. */
 	entity: string;
 	/** The record whose cell is being edited, or null. */
 	record: string | null;
@@ -72,8 +69,7 @@ export function presenceStore(db: Db, pollSeconds: number): Presence {
 	const fresh = (params: unknown[]): string =>
 		`${q(P_SEEN_AT.name)} > now() - make_interval(secs => $${params.push(presentFor)})`;
 
-	/** This tab is here now. Insert or move, in one statement, because a tab that changes screens
-	 * is the same tab: its name is the key. */
+	/** Updates the presence record for the given tab. */
 	const arrive = async (values: Record<string, unknown>): Promise<void> => {
 		const params = PRESENTED.map(c => values[c.name]);
 		const ph = PRESENTED.map((_, i) => `$${i + 1}`).join(', ');

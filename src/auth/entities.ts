@@ -2,6 +2,7 @@
 
 import { boxType, defineEntities, defineEntity, defineTypes, type RecordDef, inSchema, tablesFrom } from '../schema/build.js';
 import type { ColumnInfo, TableInfo } from '../schema/model.js';
+import { VERSION_RANGE } from '../schema/reserved.js';
 import { password as passwordType } from '../types/builtin.js';
 import { builtinTypeDefs, handlersFor } from '../types/registry.js';
 
@@ -12,6 +13,7 @@ const typeDefs = defineTypes({
 	digest: { tsType: boxType<string>() },	// SHA-256 of a session token, see `digestOf` in `hash.ts`
 	role: { tsType: boxType<string>() },	// what the access policy grants against, see `schema/access.ts`
 	token: { tsType: boxType<string>() },	// browser tab identifier, minted like a session's token
+	version: { tsType: boxType<number>(), base: 'integer', attrs: VERSION_RANGE },	// a row's `_version`, see `schema/reserved.ts`
 });
 
 const authTypes = handlersFor(typeDefs);
@@ -69,6 +71,23 @@ const entityDefs = defineEntities({ ...inSchema(AUTH_SCHEMA, {
 		} satisfies RecordDef<typeof typeDefs>,
 		fks: { user: { entity: `${AUTH_SCHEMA}.user`, fields: { user: 'username' } } },
 	}),
+
+	/** The history of changes.
+	 * Each entry is one column of one record, as it stoof before somebody changed it.
+	 * Addressed by plain text (entity name + record id) rather than FKs. */
+	change: defineEntity({
+		pk: ['entity', 'record', 'field', 'version'],
+		fields: {
+			entity: { type: 'text' },			// the entity's identity, e.g. "ventas.reserva"
+			record: { type: 'text' },			// the pk address, as `crud.ts`'s `addressOf` writes it
+			field: { type: 'text' },			// the column that changed
+			version: { type: 'version' },			// what `_version` became with this write
+			was: { type: 'text' },				// what it held before, as the database renders it
+			at: { type: 'datetime', nullable: false, defaultValue: { fn: 'now' } },
+			by: { type: 'username', nullable: false },
+		} satisfies RecordDef<typeof typeDefs>,
+		fks: { by: { entity: `${AUTH_SCHEMA}.user`, fields: { by: 'username' } } },
+	}),
 }) });
 
 /** Framework's tables.
@@ -91,6 +110,7 @@ export const userTable = find(`${AUTH_SCHEMA}.user`);
 export const credentialTable = find(`${AUTH_SCHEMA}.credential`);
 export const sessionTable = find(`${AUTH_SCHEMA}.session`);
 export const presenceTable = find(`${AUTH_SCHEMA}.presence`);
+export const changeTable = find(`${AUTH_SCHEMA}.change`);
 
 /** A column in an auth table. */
 export const col = (t: TableInfo, name: string): ColumnInfo => {

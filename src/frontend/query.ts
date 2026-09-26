@@ -66,3 +66,8 @@ export const watchPath = (entity: string, key: string[], opened: string[], tab: 
 
 	return `${rowPath(entity, key)}/_viewers${asking.length ? `?${asking.join('&')}` : ''}`;
 };
+
+/** What `crudRouter` mounts under a record: what has been written over it, and by whom (SCOPE 8c).
+ * @param field one column's history, when the question is about a field rather than a record. */
+export const changesPath = (entity: string, key: string[], field?: string): string =>
+	`${rowPath(entity, key)}/_changes${field === undefined ? '' : `?field=${encodeURIComponent(field)}`}`;

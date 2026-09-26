@@ -58,6 +58,9 @@ export interface SystemMeta {
 	/** Name of the column that tracks the version of each row, for concurrency control.
 	 * Presented in `If-Match` headers. E.g. `_version`. */
 	stamp: string;
+	/** Name of the key each row carries its undoable changes under, as an `Undoable`. E.g. `_undo`.
+	 * Published for the same reason `stamp` is: so the browser never writes the name itself. */
+	undo: string;
 	/** Polling interval + presence tracking, in seconds. */
 	pollSeconds: number;
 }
@@ -83,6 +86,24 @@ export interface Watching {
 	tab: string;
 	viewers: Viewer[];
 	locks: Lock[];
+}
+
+/** A change to a record. */
+export interface Change {
+	field: string;		// the column that changed
+	was: string | null;	// what it held, as the database renders it
+	/** The row version this write produced. A string, like `_version` (compared, not counted) */
+	version: string;
+	at: string;		// when, by the database's clock
+	by: string;		// who
+}
+
+/** A record's history, map of column names to their latest changes. */
+export type Undoable = Record<string, Change>;
+
+/** One line of a record's history: a change, and what it made the column. */
+export interface Logged extends Change {
+	became: string | null;
 }
 
 /** One refusal per column name. */

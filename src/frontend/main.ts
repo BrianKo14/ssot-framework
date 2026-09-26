@@ -1,5 +1,6 @@
 import type {
-	Capability, ColumnMeta, FormatMeta, Lock, ReferenceMeta, SystemMeta, TableMeta, Viewer,
+	Capability, Change, ColumnMeta, FormatMeta, Lock, Logged, ReferenceMeta, SystemMeta, TableMeta,
+	Undoable, Viewer,
 } from '../shared/api.js';
 import { actionMenu, type Action, type ActionMenu } from './actions.js';
 import { ancestryPicker, type AncestryPicker } from './ancestry.js';
@@ -14,7 +15,7 @@ import {
 } from './fk.js';
 import { picker, type Picker } from './picker.js';
 import { watching, type Watch } from './presence.js';
-import { filterQuery, type Listing, listPath, rowPath } from './query.js';
+import { changesPath, filterQuery, type Listing, listPath, rowPath } from './query.js';
 import { router, same, type Router, type View } from './route.js';
 
 type Row = Record<string, unknown>;
@@ -47,7 +48,10 @@ const 	nav = byId('entities'),
 	peekDetailGrid = byId('peek-detail-grid'),
 	peekDetailHead = byId('peek-detail-head'),
 	peekDetailRows = byId('peek-detail-rows'),
-	peekDetailEmpty = byId('peek-detail-empty');
+	peekDetailEmpty = byId('peek-detail-empty'),
+	peekChanges = byId('peek-changes'),
+	peekChangesList = byId('peek-changes-list'),
+	peekChangesEmpty = byId('peek-changes-empty');
 
 const say = (message: string, state: 'ready' | 'busy' | 'error' = 'ready') => {
 	statusLine.textContent = message;
@@ -186,6 +190,70 @@ const header = (t: TableMeta) => (sh: Reachable) => {
 /** Shared by the grid's cell and the peek's field, so the two can't disagree on what's editable. */
 const writable = (t: TableMeta, c: ColumnMeta) => !t.pk.includes(c.name) && t.capabilities.includes('update');
 
+
+// --- Undo (SCOPE 6g) ---
+
+/** What a row's last writes overwrote, by column. It travels on the row itself, so a cell that
+    has been written over is answered by the same read that drew it — no second question, and
+    nothing to keep in step beside the row. */
+const changesOf = (row: Row): Undoable => (row[undoable] ?? {}) as Undoable;
+
+/** What one press of a row's undo puts back: every column of the last save that actually changed
+    something — one when the grid wrote a cell, several when the panel saved or an fk was picked
+    across composite columns.
+
+    The newest version *in the log* rather than the row's own, so a write that changed nothing —
+    a `PUT` of the values already there — does not leave the button saying there is nothing to
+    undo when there plainly is. Compared as numbers: a version is a `bigint` written as text, and
+    `"10" > "9"` is false. */
+const lastSave = (row: Row): Change[] => {
+	const changes = Object.values(changesOf(row));
+	const newest = changes.reduce((n, c) => Math.max(n, Number(c.version)), 0);
+
+	return changes.filter(c => Number(c.version) === newest);
+};
+
+/** What an undo sends: the values the log kept, under the columns they were kept for. An ordinary
+    body, so the claim, the version and the policy all answer it as they answer any other write. */
+const putBack = (changes: Change[]): Row => Object.fromEntries(changes.map(c => [c.field, c.was]));
+
+/** A timestamp as a person reads one; the seconds a clock keeps are not what is being asked. */
+const when = (at: string) => at.slice(0, 16);
+
+/** What an undo offers, worded — and whose write it would undo, because it is not personal: the
+    log knows who wrote last, and the button says so before it is pressed. */
+const undoLabel = (changes: Change[]) =>
+	changes.length === 0
+		? 'Sin cambios para deshacer'
+		: `Deshacer ${count(changes.length, 'cambio')} de ${changes[0].by} (${when(changes[0].at)})`;
+
+/** Puts back what a write overwrote. An undo is an ordinary write and nothing about it is
+    special-cased anywhere: it goes through `patched`, carries the version the row was read at,
+    and is refused by a claim exactly as a typed value would be. */
+async function undoing(s: Sheet, row: Row, changes: Change[], button: HTMLButtonElement): Promise<void> {
+	if (!changes.length) return;
+
+	const at = addressOf(s.t, row);
+	const tr = button.closest('tr');
+
+	button.disabled = true;				// no second press while the first is in the air
+	say('Deshaciendo…', 'busy');
+
+	try {
+		await patched(s, row, putBack(changes));
+		say(summary(s));
+	} catch (err) {
+		if (sessionEnded(err)) { location.reload(); return; }
+
+		say(refused(err) ? refusal(err, at) : (err as Error).message, 'error');
+	} finally {
+		// whichever way it went, `patched` has left the row holding what the server holds
+		if (tr?.isConnected) fill(tr, s, row);
+
+		refreshPeek(s.t, row);
+	}
+}
+
 /** A table drawn on screen: the screen's own grid, or a subtable under the row panel. A row is
     written the same way on both — only where it is drawn, and what its leading cell holds,
     differ — so neither can end up reading its own way. */
@@ -221,7 +289,30 @@ const cell = (s: Sheet, row: Row) => (sh: Reachable) => {
 	td.classList.add('editable');
 	td.addEventListener('dblclick', () => void enter(s, row, column, td));
 
+	const back = changesOf(row)[column.name];
+
+	if (back) td.append(cellUndo(s, row, back));	// a cell that was written over says so, and offers it back
+
 	return td;
+};
+
+/** The undo on a cell something was written over (SCOPE 6g): the row's button asking for one
+    column instead of for a save. It stops the clicks it answers from reaching the cell, so
+    pressing it never opens an editor on the value it is about to replace.
+
+    Drawn wherever a cell is editable, a subtable's included — a cell is written the same way on
+    both sheets, so it is put back the same way on both. */
+const cellUndo = (s: Sheet, row: Row, back: Change) => {
+	const button = classed('button', 'undo');
+	const label = undoLabel([back]);
+
+	button.type = 'button';
+	button.title = label;
+	button.setAttribute('aria-label', `${back.field}: ${label}`);
+	button.addEventListener('click', e => { e.stopPropagation(); void undoing(s, row, [back], button); });
+	button.addEventListener('dblclick', e => e.stopPropagation());
+
+	return button;
 };
 
 /** Shows (or clears) an error message under a field. */
@@ -304,17 +395,24 @@ const field = (p: Peeked) => (c: ColumnMeta) => {
 	return [label, box];
 };
 
-/** The grid's sticky leading column. */
+/** The grid's sticky leading column.
+
+    How many controls it was given is written on the cell, because the mark a cursor leaves has to
+    find the first of them and only this cell knows how many there are. It is counted off the
+    children rather than declared, so it follows what `Sheet.handle` gave it and no sheet is asked
+    a second time which one it is. */
 const lead = (tag: 'th' | 'td', ...children: Node[]) => {
 	const node = el(tag, ...children);
 
 	node.className = 'lead';
+	node.style.setProperty('--slots', String(children.length));
 
 	return node;
 };
 
-/** The screen's leading cell: the handle that opens the row in the side panel, which is where
-    the screen already is, and beside it the latch that holds the record (SCOPE 6e). */
+/** The screen's leading cell: the handle that opens the row in the side panel, which is where the
+    screen already is, the latch that holds the record (SCOPE 6e), and the undo that puts its last
+    save back (SCOPE 6g). Three things that are true *of a row* rather than of its data. */
 const opener = (s: Sheet, row: Row): Node[] => {
 	const button = classed('button', 'handle');
 
@@ -323,7 +421,7 @@ const opener = (s: Sheet, row: Row): Node[] => {
 	button.setAttribute('aria-label', 'Ver registro');
 	button.addEventListener('click', () => show(record(s, row, button)));
 
-	return [button, latch(s, row)];
+	return [button, latch(s, row), undo(s, row)];
 };
 
 /** A subtable's handle: a real link to the row's own screen, for the same reason an fk value is
@@ -378,6 +476,42 @@ const relatch = (tr: HTMLElement, t: TableMeta) => {
 	else button.dataset.name = who;
 };
 
+/** The row's undo (SCOPE 6g), built empty and kept like the two beside it: what it *says* is
+    written by `reundo`. */
+const undo = (s: Sheet, row: Row) => {
+	const button = classed('button', 'undo');
+
+	button.type = 'button';
+	// read at the press, not at the build: the row is mutated in place and this button outlives
+	// every redraw of the line, so what it would put back is whatever the row says by then
+	button.addEventListener('click', () => void undoing(s, row, lastSave(row), button));
+
+	return button;
+};
+
+/** What the row's undo says: whether there is anything to put back, and whose write it would
+    undo.
+
+    Written in `fill` rather than where the viewers are, which is the one place this differs from
+    the latch beside it: a claim moves while the row sits still, so it can only come from the
+    poll, and a change *is* the row moving — so it arrives with the row and is drawn with it.
+
+    A sheet that draws no undo — a subtable, whose rows are written on their own screen — simply
+    has none to write, the same way it has no latch. `.lead` scopes the search: a cell's own undo
+    is on the same line and answers a different question. */
+const reundo = (tr: HTMLElement, t: TableMeta, row: Row) => {
+	const button = tr.querySelector<HTMLButtonElement>('.lead .undo');
+
+	if (!button) return;
+
+	const changes = lastSave(row);
+	const label = undoLabel(changes);
+
+	button.disabled = changes.length === 0 || !t.capabilities.includes('update');
+	button.title = label;
+	button.setAttribute('aria-label', label);
+};
+
 /** Takes the record's claim or lets it go, whichever the latch is showing.
     The poll is what draws the answer, so all that is left is to ask it again at once rather
     than let someone wait a round to see their own press. */
@@ -424,6 +558,7 @@ async function hold(s: Sheet, row: Row, button: HTMLButtonElement): Promise<void
 const fill = (tr: HTMLTableRowElement, s: Sheet, row: Row) => {
 	tr.dataset.at = key(s.t, row).join('/');
 	tr.replaceChildren(tr.querySelector('.lead') ?? lead('td', ...s.handle(row)), ...s.columns.map(cell(s, row)));
+	reundo(tr, s.t, row);			// the lead cell is kept, so what it says has to be written
 
 	return tr;
 };
@@ -769,7 +904,9 @@ const closePeek = (restore = false) => {
 	opened = null;
 	peek.hidden = true;
 	peekDetails.hidden = true;
+	peekChanges.hidden = true;
 	peekDetailRows.replaceChildren();	// so reopening never flashes the last record's rows
+	peekChangesList.replaceChildren();
 	dropPickers();
 
 	cursor();				// the panel is closed: whatever the cursor is now, it is not this record
@@ -799,6 +936,7 @@ const fillPeek = () => {
 	disarmDelete();
 	syncPeekActions();
 	fillDetails();
+	void loadChanges().catch(failSoftly);
 };
 
 /** Updates the shown row after a sheet redraw, unless there are unsaved edits or this isn't
@@ -1151,6 +1289,46 @@ const fillDetails = () => {
 	openTab(at < 0 ? 0 : at);
 };
 
+/** One line of a record's history: what the column was, what it became, and who is answerable.
+    The value is drawn the way a null is drawn everywhere else, because that is what it is. */
+const changed = (one: Logged) => {
+	const value = (v: string | null) => {
+		const span = classed('span', 'change-value', v === null ? 'null' : v);
+
+		span.classList.toggle('null', v === null);
+
+		return span;
+	};
+
+	return classed('li', 'change',
+		classed('span', 'change-field', one.field),
+		value(one.was),
+		classed('span', 'change-arrow', '→'),
+		value(one.became),
+		classed('span', 'change-who', `${one.by} · ${when(one.at)}`));
+};
+
+/** The record's history (SCOPE 8c), newest first. Asked for with the panel and again whenever it
+    is redrawn — a write is exactly when there is something new to say, and a write is exactly
+    when the panel is rebuilt, so there is nothing further to keep in step.
+
+    A draft has none: it is not a record until it has been saved, which is the same reason it has
+    no subtables. */
+async function loadChanges(): Promise<void> {
+	const showing = opened;
+
+	peekChanges.hidden = !showing?.key.length;
+
+	if (!showing?.key.length) { peekChangesList.replaceChildren(); return; }
+
+	const history = await api<Logged[]>(changesPath(showing.t.entity, showing.key));
+
+	if (opened !== showing) return;			// the panel moved on while this was in the air
+
+	peekChangesList.replaceChildren(...history.map(changed));
+	peekChangesEmpty.hidden = history.length > 0;
+}
+
 /** A row being inserted into the open subtable. The columns the master fixes are written already
     and are not writable — the fk *is* the master's key, seen from the detail — and they go in
     the POST whether or not they were typed. Saving comes back to the master, and drawing it
@@ -1380,6 +1558,9 @@ let me!: Session;
 /** Built in `main`, once `_meta` has answered. */
 let defaultOp!: string;
 let stamp!: string;
+/** Name of the key a row carries its undoable changes under (SCOPE 6g); `_meta` says it, so the
+ * browser never writes the name itself — the same reason `stamp` is published. */
+let undoable!: string;
 let watch!: Watch;
 let filters!: FilterBar;
 let inserts!: ActionMenu;
@@ -1505,6 +1686,7 @@ async function main(): Promise<void> {
 
 	defaultOp = meta.defaultOperator;
 	stamp = meta.stamp;
+	undoable = meta.undo;
 	watch = watching(meta.pollSeconds, showViewers);
 	filters = filterBar(tables, meta.operators, refilter);
 	inserts = actionMenu('Insertar', [insertRow, ancestorField]);

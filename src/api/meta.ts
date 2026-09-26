@@ -5,6 +5,7 @@ import type { ColumnMeta, ReferenceMeta, SystemMeta, TableMeta } from '../shared
 import { formatMeta } from '../format/registry.js';
 import { DEFAULT_OP, operatorMeta } from '../sql/filter.js';
 import { allows, CAPABILITIES } from '../schema/access.js';
+import { UNDO } from '../auth/changes.js';
 import type { ColumnInfo, ReferenceInfo, TableInfo } from '../schema/model.js';
 import { STAMP } from '../schema/reserved.js';
 
@@ -54,6 +55,7 @@ export function metaRouter(tables: TableInfo[], pollSeconds: number): Router {
 			defaultOperator: DEFAULT_OP,
 			formats: formatMeta,
 			stamp: STAMP.name,
+			undo: UNDO,
 			pollSeconds,
 		} satisfies SystemMeta);
 	});

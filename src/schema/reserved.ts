@@ -5,9 +5,10 @@ import { defaultSqlOf } from './defaults.js';
 import type { ColumnInfo, TableInfo } from './model.js';
 
 const STORAGE = 'bigint';
+export const VERSION_RANGE = { kind: 'range', min: 0, max: Number.MAX_SAFE_INTEGER } as const;
 
 const counter: ColumnInfo['type'] = {
-	...integer(0, Number.MAX_SAFE_INTEGER),
+	...integer(VERSION_RANGE.min, VERSION_RANGE.max),
 	expected: 'a row version',
 };
 

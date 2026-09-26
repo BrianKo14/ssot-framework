@@ -44,6 +44,10 @@
 	   the shut one's shackle comes down into it on the left, the open one's stands free. */
 	--icon-lock: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.2" y="7" width="9.6" height="6.2" rx="1.6"/><path d="M5.6 7V5.2a2.4 2.4 0 0 1 4.8 0V7"/></svg>');
 	--icon-unlock: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.2" y="7" width="9.6" height="6.2" rx="1.6"/><path d="M5.6 5.2a2.4 2.4 0 0 1 4.8 0V7"/></svg>');
+	/* The undo (SCOPE 6g): a shaft that turns back on itself, with the head on the end it came
+	   from. It reads as one motion reversed, which is what the button does — and it leans left,
+	   away from the padlock's upright body, so the two do not read as a pair at this size. */
+	--icon-undo: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.4 3.4 3.4 6.4l3 3"/><path d="M3.4 6.4h5.8a3.2 3.2 0 0 1 0 6.4H6.4"/></svg>');
 }
 
 @media (prefers-color-scheme: dark) {
@@ -730,6 +734,7 @@ a.ref:hover { color: var(--brand-ink); text-decoration-color: currentColor; }
    the column's and not the mark's, so the mark and the handle underneath it move together. */
 .lead {
 	--slot: 1.5rem;
+	--slots: 1;			/* overridden per cell by `lead`, from what `Sheet.handle` gave it */
 	--gutter: .25rem;
 	position: sticky;
 	left: 0;
@@ -761,7 +766,8 @@ td.lead { z-index: 1; }
    already keep, where the script names a class and nothing in it knows what a mark looks like. */
 /* The slot is stated on the mark rather than inherited from the control: a button's content box
    shrink-to-fits, so an empty box left to stretch comes out nothing wide and nothing is drawn. */
-.lead :is(button, a)::before {
+.lead :is(button, a)::before,
+td.editable > .undo::before {
 	content: "";
 	display: block;
 	width: var(--slot);
@@ -771,6 +777,10 @@ td.lead { z-index: 1; }
 	mask: var(--mark) center / .875rem no-repeat;
 }
 .lead .handle { --mark: var(--icon-expand); }
+
+/* The undo names its mark once, wherever it sits: the leading column's, which puts a row's last
+   save back, and a cell's, which puts that one value back. One control in two places. */
+.undo { --mark: var(--icon-undo); }
 
 tbody tr:hover .lead :is(button, a),
 .lead :is(button, a):focus-visible,
@@ -791,10 +801,16 @@ tr.open .lead :is(button, a) { opacity: 1; }
 .lead .latch:disabled { cursor: default; }
 .lead .latch[data-held="free"]:disabled { opacity: 0; }
 
+/* The row's undo (SCOPE 6g), the third slot. Hover-only and never news, unlike a held padlock:
+   it is an offer, like the handle. A row with nothing to put back — or a role that may not write
+   this table — has nothing to offer and does not answer the pointer at all, which is the rule the
+   free latch beside it already follows. */
+.lead .undo:disabled { opacity: 0; cursor: default; }
+
 /* Pressed-ness as a wash rather than a change of ink: the ink is already carrying the position.
    `color-mix` and not `opacity`, which would open a stacking context beside the sticky layering
    this column depends on. */
-.lead .latch:hover:not(:disabled) { background: color-mix(in srgb, currentColor 14%, transparent); }
+.lead :is(.latch, .undo):hover:not(:disabled) { background: color-mix(in srgb, currentColor 14%, transparent); }
 
 /* The open row is marked on its handle alone — the row itself never changes colour. */
 tr.open .lead { background: var(--brand-soft); }
@@ -838,8 +854,11 @@ tr.watched > td {
 	position: absolute;
 	top: 50%;
 	/* over the handle, wherever the column settles: half the gutter undoes what the inset does to
-	   the cell's own centre, and half a slot steps back from there to the first of the two. */
-	left: calc(50% + (var(--gutter) - var(--slot)) / 2);
+	   the cell's own centre, and half a slot per control *after* the first steps back from there
+	   to the first of them. `--slots` is how many the cell was given, written by `lead` from the
+	   children `Sheet.handle` handed it — so the mark follows the column rather than being told a
+	   second time how wide it is. Two of them is the old `(gutter - slot) / 2`, unchanged. */
+	left: calc(50% + (var(--gutter) - var(--slot) * (var(--slots) - 1)) / 2);
 	transform: translate(-50%, -50%);
 	display: grid;
 	place-content: center;
@@ -868,8 +887,32 @@ td.lead:hover .watcher { opacity: 0; }
 
 /* A cell that can be written into. The signal is the cell's own ring, not a tint across the whole
    row: what is about to be edited is one value, not the record. */
-td.editable { cursor: cell; }
+td.editable { cursor: cell; position: relative; }
 td.editable:hover { outline: 1px solid var(--line); outline-offset: -1px; }
+
+/* The cell's own undo (SCOPE 6g): drawn only on a cell that something was written over, and shown
+   only while the pointer is on it — the same offer the handle makes, one value down. It lies over
+   the value's right edge instead of in the flow, so a column does not jump wider the moment a
+   cell turns out to have a history; opaque for the reason the editor's box is, which is that what
+   is underneath is covered rather than shown through. */
+td.editable > .undo {
+	--slot: 1.25rem;
+	position: absolute;
+	top: 50%;
+	right: .25rem;
+	transform: translateY(-50%);
+	width: var(--slot);
+	height: var(--slot);
+	padding: 0;
+	border: 0;
+	border-radius: 4px;
+	background: var(--surface);
+	color: var(--faint);
+	opacity: 0;
+	cursor: pointer;
+}
+td.editable:hover > .undo, td.editable > .undo:focus-visible { opacity: 1; }
+td.editable > .undo:hover { color: var(--ink); }
 
 /* A line somebody's cursor is on is already drawn, and the ring is not drawn on top of it: it is
    inset by a pixel, so it lands on the band the row is wearing and the pointer passing across
@@ -1184,6 +1227,80 @@ td.bad input { outline-color: var(--bad); }		/* refused, and still on screen to 
 	padding: .75rem 1rem;
 	color: var(--muted);
 	font-size: .8125rem;
+}
+
+
+/* --- The record's history (SCOPE 8c) --- */
+
+/* Under the subtables, at the bottom of the panel, because it is the least current thing about a
+   record: what it holds, then what belongs to it, then what it used to hold. It borrows the
+   subtables' shape — same heading voice, same raised ground, same share of the panel — since it
+   is the same kind of thing, a region of the record rather than a second screen. */
+#peek-changes {
+	display: flex;
+	flex-direction: column;
+	flex: 0 0 auto;
+	min-height: 0;
+	max-height: 40%;
+	border-top: 1px solid var(--line);
+	background: var(--raised);
+}
+#peek-changes[hidden] { display: none; }	/* `display: flex` would otherwise outvote the attribute */
+
+#peek-changes-title {
+	margin: 0;
+	flex: none;
+	padding: .625rem .75rem .25rem;
+	color: var(--faint);
+	font-size: .6875rem;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: .08em;
+}
+
+/* One line per change, newest first, and it is the list that scrolls rather than the panel. */
+#peek-changes-list {
+	margin: 0;
+	padding: 0 .75rem .625rem;
+	overflow: auto;
+	list-style: none;
+}
+
+/* The column, what it was, what it became, and who is answerable — in that order, because that
+   is the order the sentence is read in. The tracks hug their content and start at the left, so
+   the arrow stays between the two values it is about rather than drifting to the far edge; each
+   value may still shrink and clip, so one long one cannot push the other off the line. */
+.change {
+	display: grid;
+	grid-template-columns: auto minmax(0, max-content) auto minmax(0, max-content);
+	justify-content: start;
+	align-items: baseline;
+	gap: 0 .375rem;
+	padding: .3125rem 0;
+	border-bottom: 1px solid var(--line);
+	font-size: .75rem;
+}
+.change:last-child { border-bottom: 0; }
+
+.change-field {
+	color: var(--muted);
+	font-weight: 600;
+}
+.change-value {
+	color: var(--ink);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.change-arrow { color: var(--faint); }
+
+/* Who and when, on the line below the values it is about: the panel is narrow, and a fifth thing
+   on one row would leave every value clipped to nothing. */
+.change-who {
+	grid-column: 1 / -1;
+	color: var(--faint);
+	font-size: .6875rem;
 }
 
 

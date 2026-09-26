@@ -46,7 +46,7 @@ const entityDefs = defineEntities({
 		} satisfies RecordDef<typeof typeDefs>,
 		uks: { email: ['email'] },
 		fks: { recomendado_por: { entity: 'cliente', fields: { recomendado_por: 'id' } } },
-		access: { admin: CAPABILITIES, recepcion: ['read', 'create', 'update'] },
+		access: { admin: CAPABILITIES, recepcion: ['read', 'create', 'update', 'lock'] },
 	}),
 
 	...inSchema('menu', {

@@ -1,7 +1,7 @@
 // The schema generator
 
 import type { ColumnInfo, TableInfo } from '../schema/model.js';
-import { stored } from '../schema/stamp.js';
+import { stored } from '../schema/reserved.js';
 import {
 	canonicalType, checkedName, checkedSchema, columnList, DEFAULT_SCHEMA, generatedName, q, qualified,
 	storageType, tableRef,
@@ -229,7 +229,7 @@ function columnTarget(t: TableInfo, c: ColumnInfo): Target {
 /** The table w/ everything that goes inside. */
 function tableTarget(t: TableInfo, taken: Set<string>): Target {
 	const keys = keyConstraints(t, taken);
-	const columns = stored(t);			// the described columns, plus the row version
+	const columns = stored(t);			// the described columns + reserved ones
 
 	return {
 		key: objectKey('table', t.schema, t.table),

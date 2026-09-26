@@ -108,6 +108,27 @@ AUTH_PASSWORD='yourpassword' npm run auth:user -- brian --role admin --email bri
 AUTH_PASSWORD='yourpassword' npm run auth:user -- recepcion --role recepcion
 ```
 
+## Managing record locks
+
+A claim on a record (SCOPE 6e) has no expiry: it stands until its holder lets it
+go, or until somebody with `delete` on that entity takes it off them. If neither
+can happen — the holder has left and no role is granted `delete` there — this is
+the way out.
+
+```bash
+npm run locks                                  # every claim: entity, record, holder
+npm run locks -- --user ada                    # only ada's
+npm run locks -- --entity cliente              # only this screen's
+npm run locks -- --release --user ada          # let ada's go
+npm run locks -- --release --entity cliente    # let this screen's go
+```
+
+A record is named the way the address names it — the pk values joined with `/`,
+so `ventas.reserva 2026-09-12/1` is the row `/ventas.reserva/2026-09-12/1`.
+
+`--release` needs `--user` or `--entity`. Clearing every claim in the database in
+one command is not offered, because a claim is somebody's unfinished work.
+
 ## Using the API from the terminal
 
 The server listens on port 3000 by default (`PORT` to change it). The auth

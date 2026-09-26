@@ -72,10 +72,17 @@ export interface Viewer {
 	record: string | null;
 }
 
-/** The answer to a poll: this tab's own name, and who else is here. */
+/** A held record. */
+export interface Lock {
+	record: string;
+	holder: string;
+}
+
+/** About a tab; its viewers and locks. */
 export interface Watching {
 	tab: string;
 	viewers: Viewer[];
+	locks: Lock[];
 }
 
 /** One refusal per column name. */

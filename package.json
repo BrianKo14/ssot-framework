@@ -16,6 +16,7 @@
     "db:up": "docker compose up -d",
     "db:reset": "docker compose down -v && docker compose up -d && npm run db:create -- --apply",
     "auth:user": "node --env-file=.env dist/ops/user.js",
+    "locks": "node --env-file=.env dist/example/locks.js",
     "start": "node --env-file=.env dist/example/index.js",
     "dev": "node --env-file=.env --watch dist/example/index.js"
   },

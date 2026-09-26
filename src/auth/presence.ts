@@ -48,9 +48,11 @@ export interface At {
 	within: string[];
 }
 
+export type Seen = Omit<Watching, 'locks'>;
+
 export interface Presence {
-	/** Says this tab is here, and answers with the others. */
-	see(at: At): Promise<Watching>;
+	/** Returns the set of tabs that are currently present and watching something. */
+	see(at: At): Promise<Seen>;
 }
 
 

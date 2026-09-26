@@ -1,6 +1,6 @@
-// The row version, for concurrency control
+// Row versions, for concurrency control + locks
 
-import { integer } from '../types/builtin.js';
+import { integer, text } from '../types/builtin.js';
 import { defaultSqlOf } from './defaults.js';
 import type { ColumnInfo, TableInfo } from './model.js';
 
@@ -25,5 +25,16 @@ export const STAMP: ColumnInfo = {
 	defaultSql: defaultSqlOf(FIRST, counter, false, 'the row version'),
 };
 
-/** Add the row version to a table's columns. */
-export const stored = (t: TableInfo): ColumnInfo[] => [...t.columns, STAMP];
+/** Who is holding the record, or null if nobody. */
+export const LOCK: ColumnInfo = {
+	name: '_lockedBy',
+	typeName: 'text',
+	nullable: true,
+	isName: false,
+	type: { ...text(), expected: 'a user name' },
+	defaultValue: null,
+	defaultSql: null,
+};
+
+/** Add the columns the framework reserves to the definition. */
+export const stored = (t: TableInfo): ColumnInfo[] => [...t.columns, STAMP, LOCK];

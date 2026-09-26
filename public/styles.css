@@ -38,6 +38,12 @@
 	--icon-search: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.3"/><path d="M10.3 10.3 13.4 13.4"/></svg>');
 	--icon-plus: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.6" stroke-linecap="round"><path d="M8 3.4v9.2M3.4 8h9.2"/></svg>');
 	--icon-export: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.2v7.6M5.1 5.1 8 2.2l2.9 2.9M2.9 10.3v1.6a1.5 1.5 0 0 0 1.5 1.5h7.2a1.5 1.5 0 0 0 1.5-1.5v-1.6"/></svg>');
+	/* The latch on a line (SCOPE 6e): shut when the record is held, open when it can be taken.
+	   Two marks rather than one dimmed and one lit — at this size a difference in intensity
+	   reads as the pointer being answered, not as the record changing hands. Same body in both;
+	   the shut one's shackle comes down into it on the left, the open one's stands free. */
+	--icon-lock: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.2" y="7" width="9.6" height="6.2" rx="1.6"/><path d="M5.6 7V5.2a2.4 2.4 0 0 1 4.8 0V7"/></svg>');
+	--icon-unlock: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.2" y="7" width="9.6" height="6.2" rx="1.6"/><path d="M5.6 5.2a2.4 2.4 0 0 1 4.8 0V7"/></svg>');
 }
 
 @media (prefers-color-scheme: dark) {
@@ -292,7 +298,7 @@ main > header {
 /* The name, on hover or on focus. Drawn here rather than left to the browser's own tooltip:
    that one takes a second to appear, which is too slow for something you are pointing at to
    find out who it is. It hangs below the header — nothing above it clips. */
-.viewer::after {
+:is(.viewer, .latch)[data-name]::after {
 	content: attr(data-name);
 	position: absolute;
 	top: calc(100% + .5rem);
@@ -315,16 +321,31 @@ main > header {
 	border: .1875rem solid transparent;
 	border-bottom-color: var(--ink);
 }
-.viewer::after, .viewer::before {
+:is(.viewer, .latch)[data-name]::after, .viewer::before {
 	transform: translateX(-50%);
 	opacity: 0;
 	pointer-events: none;
 	transition: opacity .1s ease-out;
 }
-.viewer:hover::after, .viewer:hover::before,
-.viewer:focus-visible::after, .viewer:focus-visible::before { opacity: 1; }
+:is(.viewer, .latch)[data-name]:hover::after, .viewer:hover::before,
+:is(.viewer, .latch)[data-name]:focus-visible::after,
+.viewer:focus-visible::before { opacity: 1; }
 
-@media (prefers-reduced-motion: reduce) { .viewer::after, .viewer::before { transition: none; } }
+/* A latch gets the name and no arrow, because its `::before` is already the padlock — one
+   element has two pseudo-elements and the mark has first claim on them. And the name hangs to
+   the *right* rather than below: the leading column is pinned to the left edge of a box that
+   scrolls, so a name centred under it would be cut off on the first column and the last row. */
+.latch[data-name]::after {
+	position: absolute;
+	top: 50%;
+	left: calc(100% + .375rem);
+	transform: translateY(-50%);
+}
+.latch { position: relative; }
+
+@media (prefers-reduced-motion: reduce) {
+	:is(.viewer, .latch)::after, .viewer::before { transition: none; }
+}
 
 /* One pill, three states: counts when idle, a spinner while loading, red on failure. */
 #status {
@@ -692,11 +713,19 @@ a.ref {
 }
 a.ref:hover { color: var(--brand-ink); text-decoration-color: currentColor; }
 
-/* A sheet's leading column: the handle that opens a row, pinned so it survives a sideways
-   scroll. It holds no data, so it stays empty until the row is pointed at. The grid's handle is
-   a button (the panel opens where the screen already is), a subtable's is a link (the row is
-   read on its own screen) — one shape, so which one it is never shows. */
+/* A sheet's leading column: the handle that opens a row and, on the screen's own grid, the latch
+   that holds the record (SCOPE 6e), pinned so they survive a sideways scroll. It holds no data,
+   so it stays empty until the row is pointed at. The grid's handle is a button (the panel opens
+   where the screen already is), a subtable's is a link (the row is read on its own screen) —
+   one shape, so which one it is never shows.
+
+   Two slots wide on the screen and one in a subtable, which draws no latch: the column follows
+   what `Sheet.handle` gives it rather than being told a second time which sheet it is on. The
+   declared width is the floor that keeps the empty header cell and a subtable's column steady.
+   Everything in here is measured off `--slot` — both controls, and the mark a cursor leaves —
+   so none of the three can drift from the others. */
 .lead {
+	--slot: 1.5rem;
 	position: sticky;
 	left: 0;
 	width: 2.25rem;
@@ -709,9 +738,10 @@ th.lead { z-index: 3; }				/* the corner cell outranks both sticky axes */
 td.lead { z-index: 1; }
 
 .lead :is(button, a) {
-	display: block;
-	width: 100%;
-	height: 1.5rem;
+	display: inline-block;			/* side by side, centred by the cell's own text-align */
+	vertical-align: middle;
+	width: var(--slot);
+	height: var(--slot);
 	padding: 0;
 	border: 0;
 	border-radius: 4px;
@@ -720,18 +750,46 @@ td.lead { z-index: 1; }
 	opacity: 0;				/* still clickable: only a pointer already on the row can reach it */
 	cursor: pointer;
 }
-.lead :is(button, a)::before {				/* the mark, on its own box, so the focus ring is not masked away */
+
+/* The mark, on its own box, so the focus ring is not masked away. *Which* mark is the control's
+   own business: it names one and the shape follows, the same division the toolbar's buttons
+   already keep, where the script names a class and nothing in it knows what a mark looks like. */
+/* The slot is stated on the mark rather than inherited from the control: a button's content box
+   shrink-to-fits, so an empty box left to stretch comes out nothing wide and nothing is drawn. */
+.lead :is(button, a)::before {
 	content: "";
 	display: block;
-	height: 100%;
+	width: var(--slot);
+	height: var(--slot);
 	background: currentColor;
-	-webkit-mask: var(--icon-expand) center / .875rem no-repeat;
-	mask: var(--icon-expand) center / .875rem no-repeat;
+	-webkit-mask: var(--mark) center / .875rem no-repeat;
+	mask: var(--mark) center / .875rem no-repeat;
 }
+.lead .handle { --mark: var(--icon-expand); }
+
 tbody tr:hover .lead :is(button, a),
 .lead :is(button, a):focus-visible,
 tr.open .lead :is(button, a) { opacity: 1; }
 .lead :is(button, a):hover { color: var(--ink); }
+
+/* The record's claim, in one of the three positions the script resolves — free, this user's,
+   somebody else's. One rule each, and neither side restates the other's half: the script says
+   what a position is called and what it takes to press, the stylesheet what it looks like and
+   when it shows.
+
+   Held is always visible, because a padlock nobody can see without pointing at the row is not
+   "una forma de ver si otro lockeó un registro". Free is hover-only, like the handle beside it:
+   an offer, not news. A latch with nothing to offer does not answer the pointer at all. */
+.lead .latch[data-held="free"] { --mark: var(--icon-unlock); }
+.lead .latch[data-held="mine"] { --mark: var(--icon-lock); color: var(--brand-ink); opacity: 1; }
+.lead .latch[data-held="theirs"] { --mark: var(--icon-lock); color: var(--bad); opacity: 1; }
+.lead .latch:disabled { cursor: default; }
+.lead .latch[data-held="free"]:disabled { opacity: 0; }
+
+/* Pressed-ness as a wash rather than a change of ink: the ink is already carrying the position.
+   `color-mix` and not `opacity`, which would open a stacking context beside the sticky layering
+   this column depends on. */
+.lead .latch:hover:not(:disabled) { background: color-mix(in srgb, currentColor 14%, transparent); }
 
 /* The open row is marked on its handle alone — the row itself never changes colour. */
 tr.open .lead { background: var(--brand-soft); }
@@ -760,15 +818,24 @@ tr.watched > td {
    its data now says whose it is, and says it the way the header says it.
    No `position: relative` on the cell: it is already `sticky`, which positions it.
 
+   The fill is the handle's own box and goes no wider, because the latch beside it answers a
+   different question — who is *holding* the record, which outlives any cursor — and one colour
+   spread across both would have the answer to one saying something about the other.
+
    The mark carries no name: the name lives on the circle, and the colour says which circle. */
-tr.watched > td.lead { background: var(--viewer); }
-tr.watched .lead :is(button, a) { color: var(--viewer-ink); }
+tr.watched .lead .handle { background: var(--viewer); color: var(--viewer-ink); opacity: 1; }
 
 .watcher {
 	position: absolute;
-	inset: 0;
+	top: 50%;
+	left: calc(50% - var(--slot) / 2);	/* over the handle, wherever the column settles */
+	transform: translate(-50%, -50%);
 	display: grid;
 	place-content: center;
+	width: var(--slot);
+	height: var(--slot);
+	border-radius: 4px;
+	background: var(--viewer);		/* opaque: the handle is lit underneath, and waiting */
 	color: var(--viewer-ink);
 	font-size: .625rem;
 	font-weight: 700;

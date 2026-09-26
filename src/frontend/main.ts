@@ -1,10 +1,10 @@
 import type {
-	Capability, ColumnMeta, FormatMeta, ReferenceMeta, SystemMeta, TableMeta, Viewer,
+	Capability, ColumnMeta, FormatMeta, Lock, ReferenceMeta, SystemMeta, TableMeta, Viewer,
 } from '../shared/api.js';
 import { actionMenu, type Action, type ActionMenu } from './actions.js';
 import { ancestryPicker, type AncestryPicker } from './ancestry.js';
 import { api, ApiError, sending } from './api.js';
-import { authenticated, sessionEnded } from './auth.js';
+import { authenticated, sessionEnded, type Session } from './auth.js';
 import { byId, classed, el } from './dom.js';
 import { download } from './export.js';
 import { filterBar, type FilterBar } from './filters.js';
@@ -91,7 +91,19 @@ const rowAt = (t: TableMeta, row: Row, listing?: Listing) => rowPath(t.entity, k
     what it said, so it is the one the screen answers by reloading rather than by marking a field. */
 const stale = (err: unknown) => err instanceof ApiError && err.status === 412;
 
+/** What it answers with when somebody else is holding the record (SCOPE 6e). Like a late write
+    it is a refusal about the record rather than about what was typed, so the screen answers it
+    the same way: put back what is there, and say why. */
+const held = (err: unknown) => err instanceof ApiError && err.status === 423;
+
+/** The two refusals that are about the record rather than about the values. Asked as one,
+    because they are answered as one — so neither can grow a site the other does not have. */
+const refused = (err: unknown) => stale(err) || held(err);
+
 const CHANGED = 'El registro cambió; se recargó con los valores actuales.';
+
+/** A record's address, as the line carries it and the poll answers it. */
+const addressOf = (t: TableMeta, row: Row) => key(t, row).join('/');
 
 /** Reads the row again into the object the screen is holding. When the server has refused a
     write for being late, showing what is actually there is the whole of the answer. */
@@ -188,8 +200,10 @@ interface Sheet {
 	empty: HTMLElement;
 	/** The fewest rows to draw. Short of that, empty ones make up the difference. */
 	leastRows: number;
-	/** What the row's leading cell holds: see `opener` and `jump`. */
-	handle(row: Row): Node;
+	/** What the row's leading cell holds: see `opener` and `jump`. More than one on the screen's
+	 * own grid, where the record is also claimed; the column follows what it is given rather
+	 * than being told a second time which sheet it is on. */
+	handle(row: Row): Node[];
 }
 
 /** A borrowed cell is read-only and links nowhere: the row it came off is not on the wire, only
@@ -299,29 +313,92 @@ const lead = (tag: 'th' | 'td', ...children: Node[]) => {
 	return node;
 };
 
-/** The screen's handle: it opens the row in the side panel, which is where the screen already is. */
-const opener = (s: Sheet, row: Row) => {
-	const button = el('button');
+/** The screen's leading cell: the handle that opens the row in the side panel, which is where
+    the screen already is, and beside it the latch that holds the record (SCOPE 6e). */
+const opener = (s: Sheet, row: Row): Node[] => {
+	const button = classed('button', 'handle');
 
 	button.type = 'button';
 	button.title = 'Ver registro';
 	button.setAttribute('aria-label', 'Ver registro');
 	button.addEventListener('click', () => show(record(s, row, button)));
 
-	return button;
+	return [button, latch(s, row)];
 };
 
 /** A subtable's handle: a real link to the row's own screen, for the same reason an fk value is
-    one. The panel it sits under is another record's, so this row is read somewhere else. */
-const jump = (t: TableMeta, row: Row) => {
-	const a = el('a');
+    one. The panel it sits under is another record's, so this row is read somewhere else — and
+    claimed there too: a latch belongs on the screen that owns the record. Writing it is still
+    refused here, because the refusal is the server's and the screens share it. */
+const jump = (t: TableMeta, row: Row): Node[] => {
+	const a = classed('a', 'handle');
 
 	a.href = route.href({ screen: t.entity, key: key(t, row), conditions: [] });
 	a.title = `Ver ${t.entity}`;
 	a.setAttribute('aria-label', `Ver ${t.entity}`);
 
-	return a;
+	return [a];
 };
+
+/** The record's claim, taken and let go by the one button, because a latch is one thing in one
+    of three positions rather than three buttons. Forcing somebody else's open is the same verb
+    sent by a role allowed to send it — the server decides that, and `delete` is what the button
+    believed when it offered the press.
+
+    Built empty and kept, like the handle beside it: what it *says* is written by `relatch`. */
+const latch = (s: Sheet, row: Row) => {
+	const button = classed('button', 'latch');
+
+	button.type = 'button';
+	button.addEventListener('click', () => void hold(s, row, button));
+
+	return button;
+};
+
+/** What the latch on a line says: which position the claim is in, who has it, and whether this
+    role may move it.
+
+    Drawn from the poll rather than from the row, because that is where a claim is answered —
+    so it is written where the viewers' marks are written, not in `fill`. A sheet that draws no
+    latch (a subtable) simply has none to write. */
+const relatch = (tr: HTMLElement, t: TableMeta) => {
+	const button = tr.querySelector<HTMLButtonElement>('.latch');
+
+	if (!button) return;
+
+	const at = String(tr.dataset.at);
+	const state = heldness(at);
+	const who = holderOf(at);
+
+	button.dataset.held = state;
+	button.disabled = !t.capabilities.includes(LATCH[state].needs);
+	button.setAttribute('aria-label', LATCH[state].label(who ?? ''));
+
+	if (who === null) delete button.dataset.name;	// nobody to name, and no name to draw
+	else button.dataset.name = who;
+};
+
+/** Takes the record's claim or lets it go, whichever the latch is showing.
+    The poll is what draws the answer, so all that is left is to ask it again at once rather
+    than let someone wait a round to see their own press. */
+async function hold(s: Sheet, row: Row, button: HTMLButtonElement): Promise<void> {
+	const at = addressOf(s.t, row);
+	const { verb } = LATCH[heldness(at)];
+
+	button.disabled = true;				// no second press while the first is in the air
+	say(verb === 'LOCK' ? 'Lockeando…' : 'Liberando…', 'busy');
+
+	try {
+		await api<void>(rowAt(s.t, row), sending(verb));
+		say(summary(s));
+	} catch (err) {
+		if (sessionEnded(err)) { location.reload(); return; }
+
+		say(refused(err) ? refusal(err, at) : (err as Error).message, 'error');
+	} finally {
+		watch.now();				// whatever it says now is what the latch should show
+	}
+}
 
 /** The one place a row's cells are written. Keeps the lead cell rather than rebuilding it,
     so the peek's reference to its button (which marks the row open) survives — and with it any
@@ -332,7 +409,7 @@ const jump = (t: TableMeta, row: Row) => {
     answered as the address writes a key, so the two can be compared without asking again. */
 const fill = (tr: HTMLTableRowElement, s: Sheet, row: Row) => {
 	tr.dataset.at = key(s.t, row).join('/');
-	tr.replaceChildren(tr.querySelector('.lead') ?? lead('td', s.handle(row)), ...s.columns.map(cell(s, row)));
+	tr.replaceChildren(tr.querySelector('.lead') ?? lead('td', ...s.handle(row)), ...s.columns.map(cell(s, row)));
 
 	return tr;
 };
@@ -368,6 +445,31 @@ const CAPABILITY_LABEL: Record<Capability, string> = {
 	create: 'Insertar',
 	update: 'Modificar',
 	delete: 'Eliminar',
+	lock: 'Lockear',
+};
+
+/** What a record's claim is, seen from this session. Three positions and no more, which is why
+    it is a type rather than a pair of booleans. */
+type Held = 'free' | 'mine' | 'theirs';
+
+/** What the latch is in each position: the capability pressing it takes, the verb it sends, and
+    what it is called. A `Record<Held, …>` for the reason `CAPABILITY_LABEL` is one — a position
+    the model gains is a compile error here, not a blank button on the screen.
+
+    Claiming a record and letting one go both ask for `lock`. Taking one off somebody else asks
+    for `delete`: the strongest thing the policy says about a record, and strictly more than
+    breaking a claim on it — which is what the server gates the same step on, so the button is
+    offered exactly where it would be honoured. */
+const LATCH: Record<Held, { needs: Capability; verb: string; label: (who: string) => string }> = {
+	free: { needs: 'lock', verb: 'LOCK', label: () => 'Lockear el registro' },
+	mine: { needs: 'lock', verb: 'UNLOCK', label: () => 'Liberar el lockeo' },
+	theirs: { needs: 'delete', verb: 'UNLOCK', label: who => `Lockeado por ${who} — forzar la liberación` },
+};
+
+const heldness = (at: string): Held => {
+	const who = holderOf(at);
+
+	return who === null ? 'free' : who === me.username ? 'mine' : 'theirs';
 };
 
 /** What the signed-in role may do on this table, beside its name.
@@ -391,6 +493,26 @@ const grants = (t: TableMeta) => {
 /** The others on this screen, as the last poll answered. Kept because the grid is redrawn far
     more often than the poll answers, and a redraw must not blank what is true. */
 let seen: Viewer[] = [];
+
+/** Who is holding what on this screen, record by record, as the last poll answered — kept
+    beside `seen` and for the same reason.
+
+    A claim travels in the poll rather than on the row, so a claim taken anywhere shows up here
+    within a poll instead of waiting for the line to be read again. What it costs is that a
+    fact which changes rarely is answered every round; what it buys is that the screen never
+    shows a padlock that is no longer there. */
+let claimed = new Map<string, string>();
+
+/** Who is holding this record, if anybody. */
+const holderOf = (at: string) => claimed.get(at) ?? null;
+
+/** What the screen says about a record that is somebody else's. The server states its refusals
+    in English; the browser is what speaks Spanish. Naming the holder is the half of SCOPE (6e)
+    that is not a button. */
+const heldBy = (at: string) => `${holderOf(at) ?? 'Otro usuario'} tiene el registro lockeado.`;
+
+/** Which of the two refusals happened, worded. */
+const refusal = (err: unknown, at: string) => (stale(err) ? CHANGED : heldBy(at));
 
 /** One circle each, beside what the screen says about itself. */
 const watchers = classed('div', 'watchers');
@@ -492,6 +614,11 @@ const drawViewers = () => {
 		const who = cursors.get(String(tr.dataset.at)) ?? [];
 		const mark = tr.querySelector<HTMLElement>('.watcher');
 
+		// The other thing the same answer carries about this line: who is holding the record
+		// (SCOPE 6e). A cursor and a claim are drawn side by side in the leading cell and share
+		// nothing else — one says who is looking, the other says who may write.
+		if (sheet) relatch(tr, sheet.t);
+
 		tr.classList.toggle('watched', who.length > 0);
 
 		if (!who.length) {
@@ -574,15 +701,16 @@ const refresh = async (at: string): Promise<void> => {
 	refreshPeek(s.t, row);			// and in the panel, if that is the record it is showing
 };
 
-const showViewers = (viewers: Viewer[]) => {
-	const held = holdings(seen);
+const showViewers = (viewers: Viewer[], locks: Lock[]) => {
+	const was = holdings(seen);
 
 	seen = viewers;
+	claimed = new Map(locks.map(l => [l.record, l.holder]));
 	drawViewers();
 
 	const still = holdings(viewers);
 
-	for (const at of held) if (!still.has(at)) void refresh(at);
+	for (const at of was) if (!still.has(at)) void refresh(at);
 };
 
 
@@ -700,6 +828,7 @@ async function savePeek(): Promise<void> {
 
 	if (!dirty.length) return;
 
+	const at = opened.key.join('/');		// held before the await, so the refusal can name a holder
 	const typed: Row = {};
 
 	for (const input of dirty) typed[input.name] = input.value.trim() === '' ? null : input.value;
@@ -716,7 +845,7 @@ async function savePeek(): Promise<void> {
 
 		// the row was re-read on the way here, so rebuilding the fields shows what is there now —
 		// and it is a rebuild, not a note under a box: nothing the user typed was wrong
-		if (stale(err)) { fillPeek(); say(CHANGED, 'error'); return; }
+		if (refused(err)) { fillPeek(); say(refusal(err, at), 'error'); return; }
 
 		const failed = err instanceof ApiError ? err.fields : undefined;
 
@@ -751,7 +880,9 @@ const disarmDelete = () => {
 async function removePeek(): Promise<void> {
 	const removing = opened?.remove;
 
-	if (!removing) return;
+	if (!removing || !opened) return;
+
+	const at = opened.key.join('/');		// held before the await, so the refusal can name a holder
 
 	peekDelete.disabled = true;
 	say('Eliminando…', 'busy');
@@ -764,7 +895,7 @@ async function removePeek(): Promise<void> {
 		// e.g. a row a detail still points at — names no field, so it goes on the status line.
 		// A late delete has already put the panel right on its way here; only the wording is left.
 		disarmDelete();
-		say(stale(err) ? CHANGED : (err as Error).message, 'error');
+		say(refused(err) ? refusal(err, at) : (err as Error).message, 'error');
 	}
 }
 
@@ -806,7 +937,7 @@ const record = (s: Sheet, row: Row, button: HTMLButtonElement): Peeked => {
 			try {
 				await api<void>(rowAt(t, row), sending('DELETE', undefined, row[stamp]));
 			} catch (err) {
-				if (!stale(err)) throw err;
+				if (!refused(err)) throw err;
 
 				await reread(s, row).catch(() => undefined);	// deleting what someone else changed is refused too
 				redraw();
@@ -837,7 +968,7 @@ async function patched(s: Sheet, row: Row, body: Row): Promise<void> {
 		saved = await api<Row>(rowAt(t, row), sending('PATCH', body, row[stamp]));
 	} catch (err) {
 		// the refusal is the news; a re-read that also fails must not replace it
-		if (stale(err)) await reread(s, row).catch(() => undefined);
+		if (refused(err)) await reread(s, row).catch(() => undefined);
 
 		throw err;
 	}
@@ -1070,14 +1201,19 @@ async function enter(s: Sheet, row: Row, c: ColumnMeta, td: HTMLTableCellElement
 		return;
 	}
 
-	if (read === row[stamp]) { edit(s, row, c, td); return; }
+	// A record somebody else is holding is refused here for the same reason a record that moved
+	// on is: the read has already happened, and this is the last moment before something is
+	// typed over it. Cheaper to say so now than to let it be typed and refused at the end.
+	const taken = heldness(addressOf(s.t, row)) === 'theirs';
+
+	if (read === row[stamp] && !taken) { edit(s, row, c, td); return; }
 
 	const tr = td.closest('tr');
 
 	if (tr?.isConnected) fill(tr, s, row);
 
 	refreshPeek(s.t, row);
-	say(CHANGED, 'error');
+	say(taken ? heldBy(addressOf(s.t, row)) : CHANGED, 'error');
 }
 
 /** A cell opens into one text box for every type — no per-type widget needed. Empty is `null`;
@@ -1145,7 +1281,7 @@ function edit(s: Sheet, row: Row, c: ColumnMeta, td: HTMLTableCellElement): void
 			// box is an answer to values that are gone. `restore` is already "put the cell back
 			// the way the row says it is", and `patched` has just made the row say what the
 			// server says — so the editor closes and the line redraws, and neither is new code.
-			if (stale(err)) { restore(); refreshPeek(t, row); say(CHANGED, 'error'); return; }
+			if (refused(err)) { restore(); refreshPeek(t, row); say(refusal(err, addressOf(t, row)), 'error'); return; }
 
 			settled = false;		// still on screen and still refused: let it be fixed
 			input.disabled = false;
@@ -1208,6 +1344,10 @@ let screen: TableMeta | null = null;
     without redrawing the list around it. */
 let sheet: Sheet | null = null;
 let listed: Row[] = [];
+
+/** Who is signed in. A claim belongs to a user and not to a tab — which is the whole of what
+    makes it different from a cursor — so the latch compares a holder against this. */
+let me!: Session;
 
 /** Built in `main`, once `_meta` has answered. */
 let defaultOp!: string;
@@ -1319,7 +1459,7 @@ const refilter = () => { if (screen) route.go(here()); };
 
 
 async function main(): Promise<void> {
-	await authenticated();			// nothing below this runs until there is a session
+	me = await authenticated();		// nothing below this runs until there is a session
 
 	let meta: SystemMeta;
 

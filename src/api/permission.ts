@@ -14,6 +14,8 @@ const CAPABILITY: ReadonlyMap<string, Capability> = new Map<string, Capability>(
 	['PUT', 'update'],
 	['PATCH', 'update'],
 	['DELETE', 'delete'],
+	['LOCK', 'lock'],
+	['UNLOCK', 'lock'],
 ]);
 
 /** May this request do `can` to this table? */
@@ -25,6 +27,9 @@ const may = (req: Request, t: TableInfo, can: Capability) => {
 
 /** May this request read from this table? */
 export const readableBy = (req: Request) => (t: TableInfo) => may(req, t, 'read');
+
+/** May this request delete from this table? */
+export const deletableBy = (req: Request) => (t: TableInfo) => may(req, t, 'delete');
 
 /** The authorization gate.
  * Is mounted inside `crudRouter` so every mount of it is guarded.

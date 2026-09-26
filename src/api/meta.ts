@@ -6,7 +6,7 @@ import { formatMeta } from '../format/registry.js';
 import { DEFAULT_OP, operatorMeta } from '../sql/filter.js';
 import { allows, CAPABILITIES } from '../schema/access.js';
 import type { ColumnInfo, ReferenceInfo, TableInfo } from '../schema/model.js';
-import { STAMP } from '../schema/stamp.js';
+import { STAMP } from '../schema/reserved.js';
 
 /** Name of the metadata endpoint. */
 export const META = '_meta';

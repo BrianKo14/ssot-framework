@@ -1,6 +1,6 @@
 // The screen says where it is, and asks who else is there (SCOPE 6d).
 
-import type { Viewer, Watching } from '../shared/api.js';
+import type { Lock, Viewer, Watching } from '../shared/api.js';
 import { api } from './api.js';
 import { sessionEnded } from './auth.js';
 import { watchPath } from './query.js';
@@ -17,6 +17,10 @@ export interface Watch {
 	 * a screen that has just been opened should not look empty for a poll.
 	 * @param entity null when there is no screen; then nothing is announced at all. */
 	at(entity: string | null, record: string[]): void;
+
+	/** Asks again at once, without having moved. For when this tab has just changed something
+	 * the answer reports — a claim taken or let go — and should not wait a round to see it. */
+	now(): void;
 }
 
 /** @param seconds what `_meta` published, which is also what the server counts a tab present
@@ -48,7 +52,7 @@ const remember = (name: string): void => {
 	try { sessionStorage.setItem(KEPT, name); } catch { /* private window, or storage refused */ }
 };
 
-export function watching(seconds: number, drawn: (viewers: Viewer[]) => void): Watch {
+export function watching(seconds: number, drawn: (viewers: Viewer[], locks: Lock[]) => void): Watch {
 	/** Minted by the server on the first ask, and kept for as long as this browser tab lives —
 	 * across a reload included, which is what `remembered` is for. */
 	let tab: string | null = remembered();
@@ -76,7 +80,7 @@ export function watching(seconds: number, drawn: (viewers: Viewer[]) => void): W
 			// Drawn as long as it is still the same screen. Where *this* tab's own cursor has
 			// moved to meanwhile does not make the answer wrong — it is about everybody else,
 			// and the follow-up ask is already queued.
-			if (where !== null && where.entity === asked.entity) drawn(seen.viewers);
+			if (where !== null && where.entity === asked.entity) drawn(seen.viewers, seen.locks);
 		} catch (err) {
 			// A poll that fails says nothing and the next one tries again — it must never be what
 			// takes a screen down. A session that ended is the one thing worth acting on.
@@ -107,9 +111,11 @@ export function watching(seconds: number, drawn: (viewers: Viewer[]) => void): W
 
 			// A new screen starts with nobody on it rather than with the last screen's people,
 			// who are not here. The answer fills it back in within one round trip.
-			if (elsewhere) drawn([]);
+			if (elsewhere) drawn([], []);
 
 			void ask();
 		},
+
+		now() { void ask(); },
 	};
 }

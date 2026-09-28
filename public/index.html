@@ -80,9 +80,12 @@
 
 	<!-- What has been written over this record, and by whom (SCOPE 8c) -->
 	<section id="peek-changes" hidden aria-labelledby="peek-changes-title">
-		<h3 id="peek-changes-title">Cambios</h3>
-		<ol id="peek-changes-list"></ol>
-		<p id="peek-changes-empty" hidden>Sin cambios.</p>
+		<h3>
+			<button id="peek-changes-title" type="button" aria-expanded="false" aria-controls="peek-changes-list">
+				Cambios <span id="peek-changes-count"></span>
+			</button>
+		</h3>
+		<ol id="peek-changes-list" hidden></ol>
 	</section>
 </section>
 

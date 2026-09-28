@@ -36,6 +36,8 @@
 	--icon-expand: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9"/></svg>');
 	--icon-close: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>');
 	--icon-search: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.3"/><path d="M10.3 10.3 13.4 13.4"/></svg>');
+	--icon-warning: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7.13 2.9a1 1 0 0 1 1.74 0l5.2 9.1a1 1 0 0 1-.87 1.5H2.8a1 1 0 0 1-.87-1.5z"/><path d="M8 6.4v3M8 11.4h.01"/></svg>');
+	--icon-chevron: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6.25 8 9.75l3.5-3.5"/></svg>');
 	--icon-plus: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.6" stroke-linecap="round"><path d="M8 3.4v9.2M3.4 8h9.2"/></svg>');
 	--icon-export: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.2v7.6M5.1 5.1 8 2.2l2.9 2.9M2.9 10.3v1.6a1.5 1.5 0 0 0 1.5 1.5h7.2a1.5 1.5 0 0 0 1.5-1.5v-1.6"/></svg>');
 	/* The latch on a line (SCOPE 6e): shut when the record is held, open when it can be taken.
@@ -351,12 +353,17 @@ main > header {
 	:is(.viewer, .latch)::after, .viewer::before { transition: none; }
 }
 
-/* One pill, three states: counts when idle, a spinner while loading, red on failure. */
+/* One pill, three states: counts when idle, a spinner while loading, red for the moment a problem
+   holds it. One line, cut short when long: the whole of a problem is in its title and in the list. */
 #status {
 	display: inline-flex;
 	align-items: center;
 	gap: .5rem;
 	flex: none;
+	max-width: 26rem;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
 	margin: 0;
 	padding: .1875rem .625rem;
 	border: 1px solid var(--line);
@@ -380,6 +387,105 @@ main > header {
 	background: color-mix(in srgb, var(--bad) 8%, transparent);
 	color: var(--bad);
 }
+
+/* What is wrong on the screen (see `status.ts`): a red mark with how many, beside the pill, and
+   the list under it while the mark is pointed at or focused. The list hangs a little below the
+   mark; an invisible strip spans that gap, so the pointer does not drop the list on its way down. */
+.issues { position: relative; flex: none; }
+.issues[hidden] { display: none; }
+
+.issues-mark {
+	display: inline-flex;
+	align-items: center;
+	gap: .25rem;
+	padding: .1875rem .5rem .1875rem .375rem;
+	border: 1px solid color-mix(in srgb, var(--bad) 35%, transparent);
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--bad) 8%, transparent);
+	color: var(--bad);
+	font: inherit;
+	font-size: .75rem;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+	cursor: default;
+}
+.issues-mark::before {
+	content: "";
+	width: .875rem;
+	height: .875rem;
+	background: currentColor;
+	-webkit-mask: var(--icon-warning) center / contain no-repeat;
+	mask: var(--icon-warning) center / contain no-repeat;
+}
+
+/* The same box every dropdown here is — `.menu`'s border, radius and shadow — at a width that
+   lets a message wrap onto a second line rather than run on. */
+.issues-list {
+	position: absolute;
+	top: calc(100% + .5rem);
+	right: 0;
+	z-index: 5;				/* over the grid's sticky cells, and over the peek — as `.menu` */
+	width: 22rem;
+	max-height: 24rem;
+	margin: 0;
+	padding: 0;
+	overflow-y: auto;
+	list-style: none;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--surface);
+	box-shadow: 0 8px 24px rgb(0 0 0 / .12);
+	scrollbar-width: thin;
+	visibility: hidden;
+}
+.issues::after {				/* the strip across the gap */
+	content: "";
+	position: absolute;
+	top: 100%;
+	right: 0;
+	width: 22rem;
+	height: .5rem;
+	visibility: hidden;
+}
+.issues:is(:hover, :focus-within) .issues-list,
+.issues:is(:hover, :focus-within)::after { visibility: visible; }
+
+/* One entry: where it is, small, then what went wrong — so a list of them can be run down the
+   left edge by row and column, and read across only where it matters. A red dot says which
+   kind of line this is without a word of it. */
+.issue {
+	display: grid;
+	grid-template-columns: .375rem 1fr;
+	column-gap: .625rem;
+	padding: .5rem .75rem;
+	border-bottom: 1px solid var(--line);
+}
+.issue:last-child { border-bottom: 0; }
+.issue::before {
+	content: "";
+	grid-row: 1 / span 2;
+	width: .375rem;
+	height: .375rem;
+	margin-top: .3125rem;
+	border-radius: 50%;
+	background: var(--bad);
+}
+
+.issue-where {
+	color: var(--muted);
+	font-size: .6875rem;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+.issue-what {
+	margin-top: .125rem;
+	color: var(--ink);
+	font-size: .75rem;
+	line-height: 1.4;
+	overflow-wrap: anywhere;
+}
+.issue-what::first-letter { text-transform: uppercase; }	/* the server's wording starts lower-case */
 
 @keyframes spin { to { transform: rotate(1turn); } }
 @media (prefers-reduced-motion: reduce) { #status[data-state="busy"]::before { animation-duration: 3s; } }
@@ -995,6 +1101,67 @@ td.editing input {
 td.editing input:disabled { color: var(--muted); }	/* in flight: the value is the server's problem now */
 td.bad input { outline-color: var(--bad); }		/* refused, and still on screen to be fixed */
 
+/* A line typed into past the last record that is not a record yet (SCOPE 2a): it becomes one as
+   soon as it has every field its insert requires. Until then what was typed reads as not stored —
+   muted, like a value in flight — the fields it still lacks are tinted with the colour of a
+   refusal, and its leading cell offers to throw it away. That offer shows without pointing, unlike
+   the handle's: a line that is not saved is news about the line. */
+tr.pending > td:not(.lead) { color: var(--muted); }
+tr.pending > td.missing { background: color-mix(in srgb, var(--bad) 8%, var(--surface)); }
+tr.pending > td.bad { color: var(--bad); }
+.lead .discard { --mark: var(--icon-close); }
+tr.pending .lead .discard { opacity: 1; }
+
+/* Cells picked for the clipboard (SCOPE 6h): a very light blue, outlined in the same blue. Which
+   cells are picked, and which of them lie on each edge, is written by `selection.ts` by position;
+   this is how they look. The fill is mixed out of the surface, so the dark theme needs only its
+   own blue. */
+:root {
+	--selected-line: #3b82f6;
+	--selected: color-mix(in srgb, var(--selected-line) 10%, var(--surface));
+	--selected-stroke: 1px;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root { --selected-line: #60a5fa; }
+}
+
+/* The outline is a box of its own over each cell, drawn on the grid's lines and not inside them,
+   the way the ring of a pointed-at cell is: it reaches over the cell's own right and bottom
+   borders, and on the range's top and left edges one line further, onto the border the row above
+   or the cell before draws. So the stroke *is* the line there, and the lines between rows do not
+   cut it into dashes. A side that is not an edge has no width and draws nothing. */
+[data-selecting] > tr > td:not(.lead) { position: relative; }
+[data-selecting] > tr > td:not(.lead)::after {
+	content: "";
+	position: absolute;
+	inset: calc(0px - var(--edge-top, 0px)) calc(0px - var(--right-line)) -1px calc(0px - var(--edge-left, 0px));
+	border: 0 solid var(--selected-line);
+	border-width: var(--edge-top, 0px) var(--edge-right, 0px) var(--edge-bottom, 0px) var(--edge-left, 0px);
+	pointer-events: none;
+}
+
+/* Except where that line belongs to the sticky header or the leading column, which are drawn
+   above the rows and would cover it: there the edge stays just inside the cell. */
+[data-selecting] > tr:first-child > td::after { top: 0; }
+[data-selecting] > tr > td:nth-child(2)::after { left: 0; }
+
+/* Where the keyboard is while cells are picked: a box that is focused but never seen, so that
+   copying and pasting arrive somewhere in every browser. Not `display: none`, which cannot take
+   the focus; laid over nothing and answering no pointer. */
+.clipboard {
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	border: 0;
+	opacity: 0;
+	resize: none;
+	pointer-events: none;
+}
+
 #empty {
 	margin: 0;
 	padding: 2.5rem 1rem;
@@ -1303,15 +1470,61 @@ td.bad input { outline-color: var(--bad); }		/* refused, and still on screen to 
 }
 #peek-changes[hidden] { display: none; }	/* `display: flex` would otherwise outvote the attribute */
 
+#peek-changes h3 { margin: 0; flex: none; }
+
+/* The heading is what opens it: the same voice as "Detalles", made a button the width of the
+   panel, with how many changes there are beside the name and a chevron at the far end that turns
+   with it. A record with none says so in place of the count, and there is nothing to open. */
 #peek-changes-title {
-	margin: 0;
-	flex: none;
-	padding: .625rem .75rem .25rem;
+	display: flex;
+	align-items: center;
+	gap: .5rem;
+	width: 100%;
+	padding: .625rem .75rem;
+	border: 0;
+	background: transparent;
 	color: var(--faint);
+	font: inherit;
 	font-size: .6875rem;
 	font-weight: 600;
+	text-align: left;
 	text-transform: uppercase;
 	letter-spacing: .08em;
+	cursor: pointer;
+}
+#peek-changes-title:hover:not(:disabled) { color: var(--muted); }
+#peek-changes-title:disabled { cursor: default; }
+
+#peek-changes-title::after {
+	content: "";
+	width: 1rem;
+	height: 1rem;
+	margin-left: auto;
+	background: currentColor;
+	-webkit-mask: var(--icon-chevron) center / .875rem no-repeat;
+	mask: var(--icon-chevron) center / .875rem no-repeat;
+	transform: rotate(-90deg);
+	transition: transform .12s ease-out;
+}
+#peek-changes-title[aria-expanded="true"]::after { transform: none; }
+#peek-changes-title:disabled::after { display: none; }
+
+@media (prefers-reduced-motion: reduce) { #peek-changes-title::after { transition: none; } }
+
+#peek-changes-count:not(:empty) {
+	padding: .0625rem .375rem;
+	border-radius: 999px;
+	background: var(--hover);
+	color: var(--muted);
+	font-size: .625rem;
+	letter-spacing: 0;
+}
+#peek-changes-title:disabled #peek-changes-count {
+	padding: 0;
+	background: none;
+	color: var(--faint);
+	font-weight: 400;
+	text-transform: none;
 }
 
 /* One line per change, newest first, and it is the list that scrolls rather than the panel. */

@@ -1,11 +1,12 @@
 import type {
-	Capability, Change, ColumnMeta, FormatMeta, Lock, Logged, ReferenceMeta, SystemMeta, TableMeta,
-	Undoable, Viewer,
+	Capability, Change, ColumnMeta, FieldErrors, FormatMeta, Lock, Logged, ReferenceMeta, SystemMeta,
+	TableMeta, Undoable, Viewer,
 } from '../shared/api.js';
 import { actionMenu, type Action, type ActionMenu } from './actions.js';
 import { ancestryPicker, type AncestryPicker } from './ancestry.js';
 import { api, ApiError, sending } from './api.js';
 import { authenticated, sessionEnded, type Session } from './auth.js';
+import type { Grid } from './clipboard.js';
 import { byId, classed, el } from './dom.js';
 import { download } from './export.js';
 import { filterBar, type FilterBar } from './filters.js';
@@ -17,6 +18,8 @@ import { picker, type Picker } from './picker.js';
 import { watching, type Watch } from './presence.js';
 import { changesPath, filterQuery, type Listing, listPath, rowPath } from './query.js';
 import { router, same, type Router, type View } from './route.js';
+import { clear as unselect, selectable, type Range } from './selection.js';
+import { type Problem, statusOf } from './status.js';
 
 type Row = Record<string, unknown>;
 
@@ -50,13 +53,12 @@ const 	nav = byId('entities'),
 	peekDetailRows = byId('peek-detail-rows'),
 	peekDetailEmpty = byId('peek-detail-empty'),
 	peekChanges = byId('peek-changes'),
-	peekChangesList = byId('peek-changes-list'),
-	peekChangesEmpty = byId('peek-changes-empty');
+	peekChangesTitle = byId('peek-changes-title') as HTMLButtonElement,
+	peekChangesCount = byId('peek-changes-count'),
+	peekChangesList = byId('peek-changes-list');
 
-const say = (message: string, state: 'ready' | 'busy' | 'error' = 'ready') => {
-	statusLine.textContent = message;
-	statusLine.dataset.state = state;
-};
+const status = statusOf(statusLine);
+const { say, busy, fail } = status;
 
 /** Clears the screen, calling off any edit or peek on it. */
 const blank = () => { grid.hidden = true; emptyNote.hidden = true; editing?.cancel(); closePeek(); };
@@ -198,6 +200,14 @@ const header = (t: TableMeta) => (sh: Reachable) => {
 /** Shared by the grid's cell and the peek's field, so the two can't disagree on what's editable. */
 const writable = (t: TableMeta, c: ColumnMeta) => !t.pk.includes(c.name) && t.capabilities.includes('update');
 
+/** A value as the one text box every type is edited in holds it — and as a copied cell holds it,
+    so what is copied out of a cell is what editing it would have started from. */
+const textOf = (value: unknown) => (value === null || value === undefined ? '' : String(value));
+
+/** What a typed text is sent as: nothing typed is `null`, anything else goes as it was typed and
+    the server's type is what reads it. Shared by the cell, the panel and a paste. */
+const typed = (text: string) => (text.trim() === '' ? null : text);
+
 
 // --- Undo (SCOPE 6g) ---
 
@@ -245,7 +255,7 @@ async function undoing(s: Sheet, row: Row, field: string | null, button: HTMLBut
 	const tr = button.closest('tr');
 
 	button.disabled = true;				// no second press while the first is in the air
-	say('Deshaciendo…', 'busy');
+	busy('Deshaciendo…');
 
 	try {
 		await undone(s, row, field);
@@ -253,7 +263,7 @@ async function undoing(s: Sheet, row: Row, field: string | null, button: HTMLBut
 	} catch (err) {
 		if (sessionEnded(err)) { location.reload(); return; }
 
-		say(refused(err) ? refusal(err, at) : (err as Error).message, 'error');
+		fail(refused(err) ? refusal(err, at) : (err as Error).message);
 	} finally {
 		// whichever way it went, `undone` has left the row holding what the server holds
 		if (tr?.isConnected) fill(tr, s, row);
@@ -276,6 +286,14 @@ interface Sheet {
 	empty: HTMLElement;
 	/** The fewest rows to draw. Short of that, empty ones make up the difference. */
 	leastRows: number;
+	/** The rows it drew, in the order it drew them — set by `renderSheet`. */
+	rows: Row[];
+	/** Lines typed into past the last row that are not records yet, each holding what was typed
+	 * into it; drawn after `rows`, in this order (SCOPE 2a). */
+	pending: Row[];
+	/** What a new row of this sheet is: the grid's own insert, or a subtable's, which writes the
+	 * master's key for it. A paste that runs past the last row inserts through it (SCOPE 6h). */
+	draft(): Draft;
 	/** What the row's leading cell holds: see `opener` and `jump`. More than one on the screen's
 	 * own grid, where the record is also claimed; the column follows what it is given rather
 	 * than being told a second time which sheet it is on. */
@@ -329,15 +347,27 @@ const note = (input: HTMLInputElement, message?: string) => {
 	input.parentElement?.querySelector('.bad-note')?.remove();
 	input.removeAttribute('aria-describedby');
 
-	if (message === undefined) return;
+	if (message !== undefined) {
+		const said = classed('p', 'bad-note', message);
 
-	const said = classed('p', 'bad-note', message);
+		said.id = `bad-${input.name}`;			// named, so the input it is about can point at it
+		said.setAttribute('role', 'alert');
+		input.setAttribute('aria-describedby', said.id);
+		input.after(said);
+	}
 
-	said.id = `bad-${input.name}`;			// named, so the input it is about can point at it
-	said.setAttribute('role', 'alert');
-	input.setAttribute('aria-describedby', said.id);
-	input.after(said);
+	listPanel();
 };
+
+/** What is wrong with the panel: the fields it has refused, read off the notes under them —
+    the notes are what says it on the panel, so they are what the list is read from. Asked
+    whenever a note comes or goes, and when the fields are rebuilt without any. */
+const listPanel = () => status.standing(peekFields,
+	[...peekFields.querySelectorAll<HTMLInputElement>('input.bad')].map(input => ({
+		table: opened ? `${opened.t.entity} ${opened.title}` : undefined,
+		field: input.name,
+		what: unprefixed(input.name, document.getElementById(`bad-${input.name}`)?.textContent ?? ''),
+	})));
 
 /** The lists the panel's fk fields are offering; dropped when those fields are rebuilt. */
 const pickers: Picker[] = [];
@@ -359,7 +389,7 @@ const pickInto = (values: Row) => {
 
 		if (!box) continue;			// a column of the fk this panel does not write
 
-		box.value = value === null ? '' : String(value);
+		box.value = textOf(value);
 		touched(box);
 	}
 };
@@ -368,7 +398,7 @@ const pickInto = (values: Row) => {
     @param into the field's own box, which the fk list (if any) hangs inside. */
 const peekInput = (c: ColumnMeta, p: Peeked, into: HTMLElement): HTMLInputElement => {
 	const input = el('input');
-	const before = p.row[c.name] === null ? '' : String(p.row[c.name]);
+	const before = textOf(p.row[c.name]);
 	const fk = fkOf(p.t, c);
 
 	input.type = 'text';
@@ -528,7 +558,7 @@ async function hold(s: Sheet, row: Row, button: HTMLButtonElement): Promise<void
 	const { verb } = LATCH[heldness(at)];
 
 	button.disabled = true;				// no second press while the first is in the air
-	say(verb === 'LOCK' ? 'Lockeando…' : 'Liberando…', 'busy');
+	busy(verb === 'LOCK' ? 'Lockeando…' : 'Liberando…');
 
 	try {
 		// The answer is the record as it now stands, so claiming one also puts the line right:
@@ -550,7 +580,7 @@ async function hold(s: Sheet, row: Row, button: HTMLButtonElement): Promise<void
 	} catch (err) {
 		if (sessionEnded(err)) { location.reload(); return; }
 
-		say(refused(err) ? refusal(err, at) : (err as Error).message, 'error');
+		fail(refused(err) ? refusal(err, at) : (err as Error).message);
 	} finally {
 		watch.now();				// whatever it says now is what the latch should show
 	}
@@ -571,29 +601,194 @@ const fill = (tr: HTMLTableRowElement, s: Sheet, row: Row) => {
 	return tr;
 };
 
-/** The rows drawn past the data, so a short list still reads as a table rather than as a rule
-    with a caption under it. They hold nothing and answer to nothing — no handle, no editable
-    cell — and `summary` does not count them, because they are not records. */
+// --- Lines that are not records yet (SCOPE 2a, 6h) ---
+
+/** Why an insert a line asked for was refused, until the line is written into again. */
+const unsaved = new WeakMap<Row, unknown>();
+
+/** What a line still needs before it can be a record: every column its insert may write, will be
+    refused empty, and has nothing typed into it. A subtable's master key is none of them — the
+    draft writes it — and neither is a column the database fills. */
+const missing = (s: Sheet, values: Row): string[] => {
+	const d = s.draft();
+
+	return s.t.columns
+		.filter(c => d.writable(c) && requiredOnInsert(c) && (values[c.name] ?? null) === null)
+		.map(c => c.name);
+};
+
+/** What a line is waiting for: the refusal of the insert it asked for, or each field it lacks. */
+const waiting = (s: Sheet, values: Row): Problem[] => {
+	const refusal = unsaved.get(values);
+
+	return refusal === undefined
+		? missing(s, values).map(field => ({ field, what: 'obligatorio' }))
+		: problemsOf(s, refusal, undefined);
+};
+
+/** Where a line that is not a record yet is on screen, counted from one like the rows before it. */
+const lineOf = (s: Sheet, values: Row) => s.rows.length + s.pending.indexOf(values) + 1;
+
+/** What is wrong with a line that is not a record yet, placed on it. */
+const pendingProblems = (s: Sheet, values: Row) => placed(s, lineOf(s, values), waiting(s, values));
+
+/** What a paste could not write onto a record, kept on the record until something is written to
+    it: until then the row does not hold what was pasted, and that is still a problem. */
+const unpasted = new WeakMap<Row, Problem[]>();
+
+/** What is wrong with a sheet for as long as it is so: the records a paste could not write, and
+    the lines that are not records yet. Placed at the moment it is asked, so a line number is
+    always where the line is now. */
+const sheetProblems = (s: Sheet) => [
+	...s.rows.flatMap((row, i) => placed(s, i + 1, unpasted.get(row) ?? [])),
+	...s.pending.flatMap(values => pendingProblems(s, values)),
+];
+
+/** Inserts a line once nothing it needs is missing; until then it waits where it is. Only what
+    was typed goes — an empty cell is left to the database, as an untouched field of the panel is.
+    A refusal is kept on the line rather than thrown: the line is still there to be fixed, and
+    whatever is written into it next asks again.
+    @returns the record it became, if it became one. */
+async function settle(s: Sheet, values: Row): Promise<Row | undefined> {
+	if (!s.pending.includes(values) || missing(s, values).length) return undefined;
+
+	const given = Object.fromEntries(Object.entries(values).filter(([, v]) => v !== null));
+	const created: Row = {};
+
+	try {
+		await written(s, created, () => s.draft().insert(given));
+	} catch (err) {
+		if (sessionEnded(err)) throw err;
+
+		unsaved.set(values, err);
+
+		return undefined;
+	}
+
+	s.pending = s.pending.filter(one => one !== values);
+
+	return created;
+}
+
+/** What writing into a line does: keep the value on it, and insert it if that was the last thing
+    it needed. A line that has been emptied again is gone, the way it was before anything was typed. */
+async function keep(s: Sheet, values: Row, body: Row): Promise<Row | undefined> {
+	Object.assign(values, body);
+	unsaved.delete(values);				// it was about what the line held before
+
+	const empty = Object.values(values).every(v => v === null);
+
+	if (empty) s.pending = s.pending.filter(one => one !== values);
+	else if (!s.pending.includes(values)) s.pending.push(values);
+
+	return settle(s, values);
+}
+
+/** Throws a line away, and what was typed into it with it. */
+const discard = (s: Sheet, values: Row) => {
+	const button = classed('button', 'discard');
+
+	button.type = 'button';
+	button.title = 'Descartar la fila sin grabar';
+	button.setAttribute('aria-label', button.title);
+	button.addEventListener('click', () => {
+		s.pending = s.pending.filter(one => one !== values);
+		extend(s, []);
+		say(summary(s));
+	});
+
+	return button;
+};
+
+/** A line past the last record: one that has been typed into, or a blank one nothing has been
+    typed into yet — which is the same thing holding nothing, so both are drawn here. Its cells
+    take values the way a record's do, through the same editor, but what is written is kept on the
+    line until the line has everything its insert needs (`settle`); the ones it still lacks are
+    marked. Nothing is editable where the role may not insert, and a blank line is then only there
+    so a short list still reads as a table. */
+const draftLine = (s: Sheet, values: Row) => {
+	const d = s.draft();
+	const kept = s.pending.includes(values);
+	const lacking = kept ? missing(s, values) : [];
+	const refusal = unsaved.get(values);
+	const fields = refusal instanceof ApiError ? refusal.fields : undefined;
+	const writes = s.t.capabilities.includes('create');
+	const tr = classed('tr', kept ? 'pending' : 'blank', lead('td', ...(kept ? [discard(s, values)] : [])));
+	const line: Line = {
+		row: values,
+		at: [],
+		save: async body => {
+			const created = await keep(s, values, body);
+
+			extend(s, created ? [created] : []);
+
+			// the insert this asked for was refused: it is listed already, so it is only shown
+			if (unsaved.has(values)) fail(...pendingProblems(s, values));
+		},
+		redraw: () => extend(s, []),
+	};
+
+	if (kept) tr.title = `Sin grabar — ${waiting(s, values).map(worded).join(', ')}`;
+
+	tr.append(...s.columns.map(sh => {
+		const value = values[sh.name] ?? null;
+		const td = el('td', value === null ? '' : String(value));
+
+		if (sh.via.length || !writes || !d.writable(sh.column)) return td;
+
+		td.classList.add('editable');
+		td.classList.toggle('missing', lacking.includes(sh.name));
+		td.classList.toggle('bad', fields?.[sh.name] !== undefined);
+		td.title = fields?.[sh.name] ?? (lacking.includes(sh.name) ? `${sh.name}: obligatorio` : '');
+		td.addEventListener('dblclick', () => edit(s, sh.column, td, line));
+
+		return td;
+	}));
+
+	return tr;
+};
+
+/** The blank lines drawn past everything else, so a short list still reads as a table rather
+    than as a rule with a caption under it — and, where the role may insert, so there is always
+    one line where a new record goes: typing into it or pasting onto it starts one. `summary`
+    does not count them, because they are not records. */
 const blanks = (s: Sheet, drawn: number) =>
-	Array.from({ length: Math.max(0, s.leastRows - drawn) },
-		() => classed('tr', 'blank', lead('td'), ...s.columns.map(() => el('td'))));
+	Array.from({ length: Math.max(s.t.capabilities.includes('create') ? 1 : 0, s.leastRows - drawn) },
+		() => draftLine(s, {}));
+
+/** Which sheet each body is showing, so the clipboard, wired once per body, asks the right one. */
+const drawn = new Map<HTMLElement, Sheet>();
+
+/** Draws rows after the ones already drawn, leaving those exactly as they are — the marks a
+    cursor, a claim or an open panel left on them included. What comes after the records — the
+    lines that are not records yet, and the blanks — is drawn again after the last. */
+const extend = (s: Sheet, more: Row[]) => {
+	s.body.querySelectorAll('tr.pending, tr.blank').forEach(tr => tr.remove());
+	s.rows = [...s.rows, ...more];
+	s.body.append(...more.map(row => fill(el('tr'), s, row)),
+		...s.pending.map(values => draftLine(s, values)), ...blanks(s, s.rows.length + s.pending.length));
+	s.empty.hidden = s.rows.length > 0;
+	status.standing(s.body, sheetProblems(s));	// every change to the lines not saved yet passes here
+};
 
 const renderSheet = (s: Sheet, data: Row[]) => {
+	drawn.set(s.body, s);
 	s.head.replaceChildren(lead('th'), ...s.columns.map(header(s.t)));
-	s.body.replaceChildren(...data.map(row => fill(el('tr'), s, row)), ...blanks(s, data.length));
+	s.body.replaceChildren();
+	s.rows = [];
+	extend(s, data);
 
 	s.table.hidden = false;			// show header even with no rows under it
-	s.empty.hidden = data.length > 0;
 };
 
 /** "1 registro", "2 registros"; an irregular plural passes its own. */
 const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** Counted off the sheet itself, not off a second copy of the count kept beside it — the rows
-    it drew to look like a table are not among them. */
+    it drew to look like a table are not among them, and neither are the lines not saved yet,
+    which are problems and are listed as such (`unwritten`). */
 const summary = (s: Sheet) =>
-	`${count(s.body.querySelectorAll('tr:not(.blank)').length, 'registro')}`
-	+ ` · ${count(s.columns.length, 'campo')}`;
+	`${count(s.body.querySelectorAll('tr[data-at]').length, 'registro')} · ${count(s.columns.length, 'campo')}`;
 
 /** What each capability is called on screen. `Record<Capability, …>` rather than a loose map:
     a verb the vocabulary adds is then a compile error here, not a raw name on the screen. */
@@ -843,7 +1038,7 @@ const refresh = async (at: string): Promise<void> => {
 
 	if (!s || busyWith(at)) return;
 
-	const row = listed.find(r => key(s.t, r).join('/') === at);
+	const row = s.rows.find(r => key(s.t, r).join('/') === at);
 	const tr = gridRows.querySelector<HTMLTableRowElement>(`tr[data-at="${CSS.escape(at)}"]`);
 
 	if (!row || !tr) return;
@@ -913,9 +1108,12 @@ const closePeek = (restore = false) => {
 	peek.hidden = true;
 	peekDetails.hidden = true;
 	peekChanges.hidden = true;
+	unselect(peekDetailRows);
 	peekDetailRows.replaceChildren();	// so reopening never flashes the last record's rows
+	status.standing(peekDetailRows, []);	// its unsaved lines went with it
 	peekChangesList.replaceChildren();
 	dropPickers();
+	status.standing(peekFields, []);	// nor anything wrong with it
 
 	cursor();				// the panel is closed: whatever the cursor is now, it is not this record
 
@@ -938,6 +1136,7 @@ const fillPeek = () => {
 	peekTitle.textContent = opened.title;
 	dropPickers();					// the ones the fields about to be replaced were offering
 	peekFields.replaceChildren(...t.columns.flatMap(field(opened)));
+	listPanel();					// rebuilt fields carry no refusal
 	peekCancel.hidden = peekSave.hidden = !writes;
 	peekDelete.hidden = !removes;
 	peekActions.hidden = !writes && !removes;
@@ -963,6 +1162,9 @@ function show(what: Peeked): void {
 	opened?.button?.closest('tr')?.classList.remove('open');
 	opened = what;
 	what.button?.closest('tr')?.classList.add('open');
+
+	foldChanges(false);				// another record's history was not asked for
+	peekChangesCount.textContent = '';
 
 	fillPeek();
 
@@ -990,23 +1192,23 @@ async function savePeek(): Promise<void> {
 	if (!dirty.length) return;
 
 	const at = opened.key.join('/');		// held before the await, so the refusal can name a holder
-	const typed: Row = {};
+	const given: Row = {};
 
-	for (const input of dirty) typed[input.name] = input.value.trim() === '' ? null : input.value;
+	for (const input of dirty) given[input.name] = typed(input.value);
 
 	peekSave.disabled = true;
 	peekCancel.disabled = true;
 	dirty.forEach(input => { input.disabled = true; });
-	say('Guardando…', 'busy');
+	busy('Guardando…');
 
 	try {
-		await opened.save(typed);
+		await opened.save(given);
 	} catch (err) {
 		if (sessionEnded(err)) { location.reload(); return; }
 
 		// the row was re-read on the way here, so rebuilding the fields shows what is there now —
 		// and it is a rebuild, not a note under a box: nothing the user typed was wrong
-		if (refused(err)) { fillPeek(); say(refusal(err, at), 'error'); return; }
+		if (refused(err)) { fillPeek(); fail(refusal(err, at)); return; }
 
 		const failed = err instanceof ApiError ? err.fields : undefined;
 
@@ -1018,7 +1220,7 @@ async function savePeek(): Promise<void> {
 			note(input, failed?.[input.name]);
 
 		syncPeekActions();
-		say((err as Error).message, 'error');
+		fail((err as Error).message);
 	}
 }
 
@@ -1046,7 +1248,7 @@ async function removePeek(): Promise<void> {
 	const at = opened.key.join('/');		// held before the await, so the refusal can name a holder
 
 	peekDelete.disabled = true;
-	say('Eliminando…', 'busy');
+	busy('Eliminando…');
 
 	try {
 		await removing();
@@ -1056,7 +1258,7 @@ async function removePeek(): Promise<void> {
 		// e.g. a row a detail still points at — names no field, so it goes on the status line.
 		// A late delete has already put the panel right on its way here; only the wording is left.
 		disarmDelete();
-		say(refused(err) ? refusal(err, at) : (err as Error).message, 'error');
+		fail(refused(err) ? refusal(err, at) : (err as Error).message);
 	}
 }
 
@@ -1134,6 +1336,9 @@ async function written(s: Sheet, row: Row, write: () => Promise<Row>): Promise<v
 
 	Object.assign(row, saved);			// keep what the server returned, not the typed text
 
+	// whatever a paste could not write here, the row has been written since: it is not a problem now
+	if (unpasted.delete(row)) status.standing(s.body, sheetProblems(s));
+
 	const borrowing = reached(s.columns);
 
 	if (borrowing.length) Object.assign(row, await api<Row>(rowAt(s.t, row, { reached: borrowing })));
@@ -1150,9 +1355,20 @@ const patched = (s: Sheet, row: Row, body: Row): Promise<void> =>
 const undone = (s: Sheet, row: Row, field: string | null): Promise<void> =>
 	written(s, row, () => api<Row>(undoAt(s.t, row, field), sending('PATCH', undefined, row[stamp])));
 
+/** A row that is not a record yet: the panel's insert, and the rows a paste runs on to past the
+    last one (SCOPE 6h). Inserting it is apart from saving it because only the panel moves on
+    after one — a paste inserts several and stays where it is. */
+interface Draft extends Peeked {
+	insert(given: Row): Promise<Row>;
+}
+
+/** One POST to the entity's collection, answered with the row as it was stored. */
+const inserted = (t: TableMeta, given: Row) =>
+	api<Row>(`/api/${encodeURIComponent(t.entity)}`, sending('POST', given));
+
 /** A new row being inserted. Every column is writable, pk included, and it all goes in one
     POST to the entity's collection. */
-const draft = (t: TableMeta, from: HTMLElement): Peeked => ({
+const draft = (t: TableMeta, from: HTMLElement): Draft => ({
 	t,
 	// what the row will be if nothing is typed: the constants the definition declares, null
 	// elsewhere. Shown but not dirty, so an untouched one is never sent and the database is
@@ -1165,8 +1381,9 @@ const draft = (t: TableMeta, from: HTMLElement): Peeked => ({
 	writable: () => true,
 	required: requiredOnInsert,
 	landing: () => peekFields.querySelector('input') ?? peekClose,
-	save: async typed => {
-		const created = await api<Row>(`/api/${encodeURIComponent(t.entity)}`, sending('POST', typed));
+	insert: given => inserted(t, given),
+	save: async given => {
+		const created = await inserted(t, given);
 
 		route.go(here(key(t, created)));	// go to the new record; drawing it lists it in
 	},
@@ -1230,9 +1447,12 @@ let tabs: HTMLButtonElement[] = [];
 /** Built in `main`, like the toolbar's own menus. */
 let details!: ActionMenu;
 
-const detailSheet = (sub: Detail): Sheet => ({
+const detailSheet = (sub: Detail, master: Peeked): Sheet => ({
 	t: sub.table,
 	columns: ownColumns(sub.table),		// ancestor columns belong to a screen, not to a table
+	rows: [],
+	pending: [],
+	draft: () => detailDraft(sub, master, details.button),
 
 	head: peekDetailHead,
 	body: peekDetailRows,
@@ -1256,6 +1476,7 @@ async function loadDetail(): Promise<void> {
 
 	if (!master || !sub) return;
 
+	unselect(peekDetailRows);			// the positions picked were the last list's
 	peekDetailHead.replaceChildren();
 	peekDetailRows.replaceChildren();
 	peekDetailGrid.hidden = true;
@@ -1265,7 +1486,7 @@ async function loadDetail(): Promise<void> {
 
 	if (opened !== master || subtable !== sub) return;
 
-	renderSheet(detailSheet(sub), data);
+	renderSheet(detailSheet(sub, master), data);
 }
 
 /** Opens one tab: marks it, points the insert menu at the table it now offers, and loads it. */
@@ -1325,6 +1546,13 @@ const changed = (one: Logged) => {
 		classed('span', 'change-who', `${one.by} · ${when(one.at)}`));
 };
 
+/** Opens or closes the record's history. Closed is how it starts on every record: it is the least
+    current thing about one, and open it takes its share of the panel from the fields. */
+const foldChanges = (open: boolean) => {
+	peekChangesTitle.setAttribute('aria-expanded', String(open));
+	peekChangesList.hidden = !open;
+};
+
 /** The record's history (SCOPE 8c), newest first. Asked for with the panel and again whenever it
     is redrawn — a write is exactly when there is something new to say, and a write is exactly
     when the panel is rebuilt, so there is nothing further to keep in step.
@@ -1342,26 +1570,32 @@ async function loadChanges(): Promise<void> {
 
 	if (opened !== showing) return;			// the panel moved on while this was in the air
 
+	// how many there are is said on the heading, so it is known before opening it — and a record
+	// with none has nothing to open
 	peekChangesList.replaceChildren(...history.map(changed));
-	peekChangesEmpty.hidden = history.length > 0;
+	peekChangesCount.textContent = history.length ? String(history.length) : 'ninguno';
+	peekChangesTitle.disabled = history.length === 0;
+
+	if (!history.length) foldChanges(false);
 }
 
 /** A row being inserted into the open subtable. The columns the master fixes are written already
     and are not writable — the fk *is* the master's key, seen from the detail — and they go in
     the POST whether or not they were typed. Saving comes back to the master, and drawing it
     lists the new row into the tab. */
-const detailDraft = (sub: Detail, master: Peeked, from: HTMLElement): Peeked => {
+const detailDraft = (sub: Detail, master: Peeked, from: HTMLElement): Draft => {
 	const inherited = valuesFrom(sub.ref, master.row);
 	const base = draft(sub.table, from);
+	const insert = (given: Row) => base.insert({ ...inherited, ...given });
 
 	return {
 		...base,
 		row: { ...base.row, ...inherited },
 		title: `Nuevo registro de ${master.title}`,
 		writable: c => !sub.ref.columns.includes(c.name),
-		save: async typed => {
-			await api<Row>(`/api/${encodeURIComponent(sub.table.entity)}`,
-				sending('POST', { ...inherited, ...typed }));
+		insert,
+		save: async given => {
+			await insert(given);
 
 			route.go(here(master.key));	// back to the master; drawing it lists the new row in
 		},
@@ -1418,26 +1652,48 @@ async function enter(s: Sheet, row: Row, c: ColumnMeta, td: HTMLTableCellElement
 	// typed over it. Cheaper to say so now than to let it be typed and refused at the end.
 	const taken = heldness(addressOf(s.t, row)) === 'theirs';
 
-	if (read === row[stamp] && !taken) { edit(s, row, c, td); return; }
+	if (read === row[stamp] && !taken) { edit(s, c, td, recordLine(s, row, td.closest('tr'))); return; }
 
 	const tr = td.closest('tr');
 
 	if (tr?.isConnected) fill(tr, s, row);
 
 	refreshPeek(s.t, row);
-	say(taken ? heldBy(addressOf(s.t, row)) : CHANGED, 'error');
+	fail(taken ? heldBy(addressOf(s.t, row)) : CHANGED);
 }
+
+/** What a cell editor writes into: a record, or a line past the last one that is not a record
+    yet (SCOPE 2a). The editor is the same for both; only these differ. */
+interface Line {
+	/** What the line holds now, which is what an editor starts from. */
+	row: Row;
+	/** Where this tab's cursor is while a cell of it is open — see `cursor`. */
+	at: string[];
+	save(body: Row): Promise<void>;
+	/** Puts the line back the way `row` says it is. */
+	redraw(): void;
+}
+
+/** A record's line. Editing a cell is being on that record, which is what a cursor is — but only
+    on the screen's own grid: a subtable's row belongs to another screen, and its master is where
+    this tab still is, which is what `cursor` falls back to. */
+const recordLine = (s: Sheet, row: Row, tr: HTMLTableRowElement | null): Line => ({
+	row,
+	at: s.t === screen ? key(s.t, row) : [],
+	save: body => patched(s, row, body),
+	redraw: () => { if (tr?.isConnected) fill(tr, s, row); },
+});
 
 /** A cell opens into one text box for every type — no per-type widget needed. Empty is `null`;
     an fk column gets the same box plus a list beside it, see `picker.ts`. */
-function edit(s: Sheet, row: Row, c: ColumnMeta, td: HTMLTableCellElement): void {
+function edit(s: Sheet, c: ColumnMeta, td: HTMLTableCellElement, line: Line): void {
 	if (editing?.td === td) return;			// a double-click *inside* the open editor selects a word
 
 	editing?.cancel();
 
 	const { t } = s;
-	const tr = td.closest('tr');
-	const before = row[c.name] === null ? '' : String(row[c.name]);
+	const { row } = line;
+	const before = textOf(row[c.name]);
 	const input = el('input');
 	const fk = fkOf(t, c);
 
@@ -1450,13 +1706,17 @@ function edit(s: Sheet, row: Row, c: ColumnMeta, td: HTMLTableCellElement): void
 	let settled = false;
 
 	/** Puts the cell back the way the row says it is. */
-	const restore = () => {
+	/** The editor is closing, one way or the other: whatever it was refused is not on screen now. */
+	const closing = () => {
 		settled = true;
 		editing = null;
 		list?.destroy();
+		status.standing(td, []);
+	};
 
-		if (tr?.isConnected) fill(tr, s, row);
-
+	const restore = () => {
+		closing();
+		line.redraw();
 		cursor();			// let go of the row, so everyone else sees it let go
 	};
 
@@ -1467,22 +1727,19 @@ function edit(s: Sheet, row: Row, c: ColumnMeta, td: HTMLTableCellElement): void
 
 		if (written === undefined && input.value === before) { restore(); return; }
 
-		const body = written ?? { [c.name]: input.value.trim() === '' ? null : input.value };
+		const body = written ?? { [c.name]: typed(input.value) };
 
 		settled = true;
 		input.disabled = true;
 		list?.close();
 		td.classList.remove('bad');
-		say('Guardando…', 'busy');
+		busy('Guardando…');
 
 		try {
-			await patched(s, row, body);
+			await line.save(body);
 
-			editing = null;
-			list?.destroy();
-
-			if (tr?.isConnected) fill(tr, s, row);
-
+			closing();
+			line.redraw();
 			refreshPeek(t, row);
 			cursor();			// the cell is closed: the row is no longer being held
 			say(summary(s));
@@ -1493,13 +1750,17 @@ function edit(s: Sheet, row: Row, c: ColumnMeta, td: HTMLTableCellElement): void
 			// box is an answer to values that are gone. `restore` is already "put the cell back
 			// the way the row says it is", and `patched` has just made the row say what the
 			// server says — so the editor closes and the line redraws, and neither is new code.
-			if (refused(err)) { restore(); refreshPeek(t, row); say(refusal(err, addressOf(t, row)), 'error'); return; }
+			if (refused(err)) { restore(); refreshPeek(t, row); fail(refusal(err, addressOf(t, row))); return; }
 
-			settled = false;		// still on screen and still refused: let it be fixed
+			// still on screen and still refused: let it be fixed — and listed, for as long as it is
+			const found = placed(s, s.rows.indexOf(row) + 1, problemsOf(s, err, row));
+
+			settled = false;
 			input.disabled = false;
 			input.focus();
 			td.classList.add('bad');
-			say((err as Error).message, 'error');
+			status.standing(td, found);
+			fail(...found);
 		}
 	};
 
@@ -1532,13 +1793,198 @@ function edit(s: Sheet, row: Row, c: ColumnMeta, td: HTMLTableCellElement): void
 	input.focus();
 	input.select();
 
-	// editing a cell is being on that record, which is what a cursor is — but only on the screen's
-	// own grid: a subtable's row belongs to another screen, and its master is where this tab
-	// still is, which is what `cursor` falls back to
-	editing = { td, cancel: restore, at: s.t === screen ? key(s.t, row) : [] };
+	editing = { td, cancel: restore, at: line.at };
 
 	cursor();
 }
+
+// --- Copy and paste (SCOPE 6h) ---
+
+/** What the `n`th line of a sheet holds: a record, a line typed into that is not one yet, or —
+    for a blank line — nothing. */
+const holding = (s: Sheet, n: number): Row | undefined => s.rows.at(n) ?? s.pending.at(n - s.rows.length);
+
+/** The text of the cells picked: what editing each one would start from. */
+const copied = (s: Sheet, { top, left, bottom, right }: Range): Grid =>
+	Array.from({ length: bottom - top + 1 }, (_, i) =>
+		Array.from({ length: right - left + 1 }, (_, j) =>
+			textOf(holding(s, top + i)?.[s.columns[left + j].name])));
+
+/** What one pasted line writes onto the row it lands on, by one rule for every cell. A cell that
+    already reads what is pasted is left alone. One that differs is written if the row lets it be,
+    and otherwise the whole line is refused.
+
+    That is what makes copying rows out to a spreadsheet and pasting them back where they came
+    from work, pk and borrowed columns included: what was not changed there is not written here.
+    It is also what catches a block pasted one row off — its keys do not read what the rows hold.
+    A new row reads what its draft holds, the defaults and a subtable's master key, so an empty
+    cell leaves the column to the database, the way an untouched field of the panel does.
+
+    @param holds what the row reads now. @param may whether the row lets a column be written. */
+const landing = (s: Sheet, left: number, texts: string[], holds: Row, may: (c: ColumnMeta) => boolean): Row => {
+	const body: Row = {};
+
+	texts.forEach((text, j) => {
+		const sh = s.columns[left + j];
+
+		if (text === textOf(holds[sh.name])) return;
+
+		// a borrowed column is the ancestor's, and no write of this row can reach it
+		if (sh.via.length || !may(sh.column)) throw new Unwritable(sh.name);
+
+		body[sh.name] = typed(text);
+	});
+
+	return body;
+};
+
+/** Writes one pasted line the way typing would have: onto the record drawn there, or — past the
+    last one — into a line that is not a record yet, which becomes one once it has everything it
+    needs (`keep`). So the version, the claim, the borrowed columns and the fields an insert
+    requires are all answered as they are for a typed cell. */
+async function pastedLine(s: Sheet, n: number, left: number, texts: string[]): Promise<{ saved?: boolean; created?: Row; kept?: Row }> {
+	const row = s.rows.at(n);
+
+	if (row) {
+		const body = landing(s, left, texts, row, c => writable(s.t, c));
+
+		if (Object.keys(body).length) await patched(s, row, body);
+
+		return { saved: Object.keys(body).length > 0 };
+	}
+
+	const fresh = s.draft();
+	const values = s.pending.at(n - s.rows.length) ?? {};
+	const body = landing(s, left, texts, { ...fresh.row, ...values }, fresh.writable);
+
+	if (!Object.keys(body).length) return {};	// a blank line pasted onto a blank line
+
+	const created = await keep(s, values, body);
+
+	return created ? { created } : { kept: values };
+}
+
+/** Why a line was not written: the record's refusal, each field the server named, or what it said. */
+const problemsOf = (s: Sheet, err: unknown, row: Row | undefined): Problem[] => {
+	if (refused(err) && row) return [{ what: refusal(err, addressOf(s.t, row)) }];
+
+	const fields = err instanceof ApiError || err instanceof Unwritable ? err.fields : undefined;
+
+	return fields
+		? Object.entries(fields).map(([field, said]) => ({ field, what: unprefixed(field, said) }))
+		: [{ what: (err as Error).message }];
+};
+
+/** The server words a field's refusal starting with the field's own name; a problem already says
+    which field it is, so the name is not said twice. */
+const unprefixed = (field: string, said: string) => (said.startsWith(`${field} `) ? said.slice(field.length + 1) : said);
+
+/** A problem in one line of text, for where there is room for only one: a line's tooltip. */
+const worded = (p: Problem) => (p.field ? `${p.field}: ${p.what}` : p.what);
+
+/** Problems placed on a line of a sheet. The table is named only for a subtable: the screen's
+    own is the one being looked at. */
+const placed = (s: Sheet, line: number, found: Problem[]): Problem[] =>
+	found.map(p => ({ ...p, line, ...(s === sheet ? {} : { table: s.t.entity }) }));
+
+/** A cell a paste may not write, refused before anything is sent. It carries its field the way a
+    400 does, so both are reported the one way. */
+class Unwritable extends Error {
+	readonly fields: FieldErrors;
+
+	constructor(field: string) {
+		super(`${field} no se puede escribir`);
+		this.fields = { [field]: 'no se puede escribir' };
+	}
+}
+
+/** A block pasted onto a sheet, with its top-left cell on `at` (SCOPE 6h).
+
+    What cannot fit is refused before anything is sent: columns past the last one, or rows past
+    the last one where the role may not insert. The rest goes one request per line, all at once —
+    there is no batch to write them in and the database has no transaction to hold them in, so a
+    paste can be written in part, and the status line says which lines were not and why. Each
+    line is one save, so its row's undo takes that line's paste back. */
+async function pasting(s: Sheet, at: Pick<Range, 'top' | 'left'>, block: Grid): Promise<void> {
+	const past = at.left + Math.max(...block.map(line => line.length)) - s.columns.length;
+
+	if (past > 0) { fail(`El pegado no entra: tiene ${count(past, 'columna')} de más.`); return; }
+
+	if (at.top + block.length > s.rows.length && !s.t.capabilities.includes('create')) {
+		fail('El pegado sigue después de la última fila, y tu rol no puede insertar.');
+		return;
+	}
+
+	busy('Pegando…');
+
+	const settled = await Promise.allSettled(block.map((texts, i) => pastedLine(s, at.top + i, at.left, texts)));
+
+	if (settled.some(one => one.status === 'rejected' && sessionEnded(one.reason))) { location.reload(); return; }
+
+	const notes: Problem[] = [];
+	const refusedRows: [Row, Problem[]][] = [];
+	const created: Row[] = [];
+	const kept: Row[] = [];
+	let saved = 0;
+
+	settled.forEach((one, i) => {
+		const n = at.top + i;
+
+		if (one.status === 'rejected') {
+			const row = s.rows.at(n);
+			const found = problemsOf(s, one.reason, row);
+
+			notes.push(...placed(s, n + 1, found));
+
+			if (row) refusedRows.push([row, found]);
+		}
+		else if (one.value.created) created.push(one.value.created);
+		else if (one.value.saved) saved++;
+		else if (one.value.kept) kept.push(one.value.kept);
+	});
+
+	// what could not be written stays on its row; `extend` below is what lists it
+	for (const [row, found] of refusedRows) unpasted.set(row, found);
+
+	// every line landed on is redrawn: a refused one has been read again, and shows what is there
+	s.rows.slice(at.top, at.top + block.length).forEach((row, i) => {
+		const tr = s.body.children[at.top + i];
+
+		if (tr instanceof HTMLTableRowElement) fill(tr, s, row);
+
+		refreshPeek(s.t, row);
+	});
+
+	extend(s, created);
+
+	if (s === sheet) drawViewers();		// the lines are new; who is on them is not
+
+	// what was done stays said; what went wrong is a problem, and what still waits is listed with
+	// the problems by `extend` — neither crowds the line
+	const done = [
+		...(saved ? [count(saved, 'registro modificado', 'registros modificados')] : []),
+		...(created.length ? [count(created.length, 'registro nuevo', 'registros nuevos')] : []),
+		...(kept.length ? [count(kept.length, 'fila sin grabar', 'filas sin grabar')] : []),
+	];
+	const refusedInserts = kept.filter(values => unsaved.has(values)).flatMap(values => pendingProblems(s, values));
+
+	say(`Pegado: ${(done.length ? done : ['nada cambió']).join(' · ')}`);
+	fail(...notes, ...refusedInserts);		// what this paste got wrong, said once
+}
+
+/** What a sheet's body answers the clipboard with — asked of whichever sheet it is showing now. */
+const clipboardOf = (body: HTMLElement) => ({
+	copy: (range: Range) => {
+		const s = drawn.get(body);
+
+		return s ? copied(s, range) : [];
+	},
+	paste: (at: Pick<Range, 'top' | 'left'>, block: Grid) => {
+		const s = drawn.get(body);
+
+		if (s) void pasting(s, at, block).catch(failSoftly);
+	},
+});
 
 /** A screen's line in the rail: its name, and who is on it — which is the same question the
     header answers about the screen being looked at, asked of all the others at once. The name
@@ -1563,10 +2009,9 @@ let tables: TableMeta[] = [];
 /** The screen being viewed, so the address can be written from what is on it. */
 let screen: TableMeta | null = null;
 
-/** The screen's own sheet and the rows it drew, so that one row can be read again and put back
-    without redrawing the list around it. */
+/** The screen's own sheet — and on it the rows it drew — so that one row can be read again and put
+    back without redrawing the list around it. */
 let sheet: Sheet | null = null;
-let listed: Row[] = [];
 
 /** Who is signed in. A claim belongs to a user and not to a tab — which is the whole of what
     makes it different from a cursor — so the latch compares a holder against this. */
@@ -1596,6 +2041,9 @@ const gridSheet = (t: TableMeta): Sheet => {
 		t, columns: [...ownColumns(t), ...showing(t)],
 		head: gridHead, body: gridRows, table: grid, empty: emptyNote,
 		leastRows: 0,			// the screen is as long as the list; nothing is held open for it
+		rows: [],
+		pending: [],
+		draft: () => draft(t, inserts.button),
 		handle: row => opener(s, row),
 	};
 
@@ -1605,14 +2053,14 @@ const gridSheet = (t: TableMeta): Sheet => {
 /** Fetches rows for the screen, under whatever filter the bar currently holds. */
 async function load(s: Sheet): Promise<Row[]> {
 	blank();
-	say('Cargando…', 'busy');
+	busy('Cargando…');
 
 	const data = await api<Row[]>(
 		listPath(s.t.entity, { filter: filters.query(), reached: reached(s.columns) }));
 
 	sheet = s;				// what a row read again on its own has to be drawn back into
-	listed = data;
 
+	unselect(gridRows);			// the positions picked were the last list's
 	renderSheet(s, data);
 	drawViewers();				// the lines are new; who is on them is not
 	say(summary(s));
@@ -1640,6 +2088,10 @@ async function draw(): Promise<void> {
 
 	if (!t) { route.go({ screen: tables[0].entity, key: [], conditions: [] }, true); return; }
 
+	// what was wrong with the last address, and with the last try at drawing one, is not now
+	status.standing(route, []);
+	status.standing(grid, []);
+
 	for (const a of nav.querySelectorAll('a'))
 		a.setAttribute('aria-current', String(a.dataset.entity === t.entity));
 
@@ -1653,21 +2105,26 @@ async function draw(): Promise<void> {
 	const s = gridSheet(t);
 	const data = await load(s);
 
-	// report anything the address asked for that wasn't found, rather than dropping it silently
-	const notes = [
-		...unresolved.map(name => `filtro ignorado: ${name}`),
+	// report anything the address asked for that wasn't found, rather than dropping it silently —
+	// and keep it listed while this is the address, because it stays true until it changes
+	const notes: Problem[] = [
+		...unresolved.map(name => ({ field: name, what: 'filtro ignorado' })),
 		...(view.key.length && !reopen(s, view.key, data)
-			? [`el registro ${view.key.join(' · ')} no está en la lista`] : []),
+			? [{ what: `el registro ${view.key.join(' · ')} no está en la lista` }] : []),
 	];
 
-	if (notes.length) say(`${summary(s)} · ${notes.join(' · ')}`, 'error');
+	status.standing(route, notes);
+	fail(...notes);
 }
 
-const fail = (err: Error) => {
+/** For what failed while drawing the screen: nothing on it can be trusted, so it is cleared —
+    and the failure is listed, since an empty screen is what it leaves until the next draw. */
+const failHard = (err: Error) => {
 	if (sessionEnded(err)) { location.reload(); return; }
 
 	blank();
-	say(err.message, 'error');
+	status.standing(grid, [{ what: err.message }]);
+	fail(err.message);
 };
 
 /** For what failed beside the screen rather than while drawing it — the grid still holds what
@@ -1675,10 +2132,10 @@ const fail = (err: Error) => {
 const failSoftly = (err: Error) => {
 	if (sessionEnded(err)) { location.reload(); return; }
 
-	say(err.message, 'error');
+	fail(err.message);
 };
 
-const render = () => void draw().catch(fail);
+const render = () => void draw().catch(failHard);
 
 // a filter change is a move like any other: it names a new address, and drawing it reloads
 const refilter = () => { if (screen) route.go(here()); };
@@ -1692,7 +2149,7 @@ async function main(): Promise<void> {
 	try {
 		meta = await api<SystemMeta>('/api/_meta');
 	} catch (err) {
-		say(`No se pudo leer el esquema: ${(err as Error).message}`, 'error');
+		fail(`No se pudo leer el esquema: ${(err as Error).message}`);
 		return;
 	}
 
@@ -1718,11 +2175,14 @@ async function main(): Promise<void> {
 	headerEnd.append(exports.element);
 	peekTabbar.append(details.element);	// outside the tabs' scroll box, so its list can escape it
 	peekClose.addEventListener('click', dismissPeek);
+	peekChangesTitle.addEventListener('click',
+		() => foldChanges(peekChangesTitle.getAttribute('aria-expanded') !== 'true'));
 	peekForm.addEventListener('submit', e => { e.preventDefault(); void savePeek(); });
 	peekCancel.addEventListener('click', cancelPeek);
 	peekDelete.addEventListener('click',
 		() => { if (peekDelete.dataset.armed === 'true') void removePeek(); else armDelete(); });
 	addEventListener('keydown', e => { if (e.key === 'Escape') dismissPeek(); });
+	for (const body of [gridRows, peekDetailRows]) selectable(body, clipboardOf(body));
 	route.onNavigate(render);
 	render();
 }

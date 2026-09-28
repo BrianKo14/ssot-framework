@@ -667,13 +667,18 @@ table {
 :is(th, td) {
 	height: 2.25rem;
 	padding: 0 .75rem;
-	border-right: 1px solid var(--line);
+	/* The grid's own lines are each cell's right and bottom border — except in the last column,
+	   where the table's edge is already the vertical. Said as a width rather than as a second
+	   rule that switches the border off, so that the ring a pointed-at cell wears can read how
+	   far its own box has to reach to land on those lines and not beside them. */
+	--right-line: 1px;
+	border-right: var(--right-line) solid var(--line);
 	border-bottom: 1px solid var(--line);
 	background: var(--surface);		/* opaque: a sticky cell must not show what slides under it */
 	text-align: left;
 	white-space: nowrap;
 }
-:is(th, td):last-child { border-right: 0; }
+:is(th, td):last-child { --right-line: 0px; }
 
 thead th {
 	position: sticky;
@@ -717,29 +722,32 @@ a.ref {
 }
 a.ref:hover { color: var(--brand-ink); text-decoration-color: currentColor; }
 
-/* A sheet's leading column: the handle that opens a row and, on the screen's own grid, the latch
-   that holds the record (SCOPE 6e), pinned so they survive a sideways scroll. It holds no data,
-   so it stays empty until the row is pointed at. The grid's handle is a button (the panel opens
-   where the screen already is), a subtable's is a link (the row is read on its own screen) —
-   one shape, so which one it is never shows.
+/* A sheet's leading column: the handle that opens a row, the latch that holds the record (SCOPE
+   6e) and the undo that puts its last save back (SCOPE 6g), pinned so all three survive a
+   sideways scroll. It holds no data, so it stays empty until the row is pointed at — the one
+   thing that shows without being asked is a padlock somebody is holding, because that is news
+   about the record rather than something this column is offering. The grid's handle is a button
+   (the panel opens where the screen already is), a subtable's is a link (the row is read on its
+   own screen) — one shape, so which one it is never shows.
 
-   Two slots wide on the screen and one in a subtable, which draws no latch: the column follows
-   what `Sheet.handle` gives it rather than being told a second time which sheet it is on. The
-   declared width is the floor that keeps the empty header cell and a subtable's column steady.
-   Everything in here is measured off `--slot` — both controls, and the mark a cursor leaves —
-   so none of the three can drift from the others.
+   Three slots wide on the screen and one in a subtable, which draws neither latch nor undo: the
+   column follows what `Sheet.handle` gives it rather than being told a second time which sheet
+   it is on. The declared width is the floor that keeps the empty header cell and a subtable's
+   column steady. Everything in here is measured off `--slot` and `--gap` — every control, and
+   the mark a cursor leaves — so none of them can drift from the others.
 
-   `--gutter` is the column's own inset: the column is pinned to the left edge of a box that
-   scrolls, so without it a round mark sits flush against that edge and reads as clipped. It is
-   the column's and not the mark's, so the mark and the handle underneath it move together. */
+   `--gutter` is the column's own inset, the same on both sides: the column is pinned to the left
+   edge of a box that scrolls, so without it the first control sits flush against that edge and
+   reads as clipped, and without the right half the last one does the same against the grid. */
 .lead {
 	--slot: 1.5rem;
 	--slots: 1;			/* overridden per cell by `lead`, from what `Sheet.handle` gave it */
-	--gutter: .25rem;
+	--gap: .1875rem;
+	--gutter: .375rem;
 	position: sticky;
 	left: 0;
 	width: 2.25rem;
-	padding: 0 0 0 var(--gutter);
+	padding: 0 var(--gutter);
 	background: var(--raised);
 	text-align: center;
 	user-select: none;
@@ -756,10 +764,23 @@ td.lead { z-index: 1; }
 	border: 0;
 	border-radius: 4px;
 	background: transparent;
-	color: var(--faint);
+	/* Its resting ink, and the same ink lifted toward the page's for when it is pointed at. The
+	   lit one is *derived* from the resting one, once, so a control with a colour of its own —
+	   a held latch — brightens within that colour instead of losing it, and every control in the
+	   column answers the pointer the same way without any of them restating how. */
+	--mark-ink: var(--faint);
+	--mark-lit: color-mix(in srgb, var(--mark-ink) 30%, var(--ink));
+	color: var(--mark-ink);
 	opacity: 0;				/* still clickable: only a pointer already on the row can reach it */
 	cursor: pointer;
 }
+
+/* The controls stand apart rather than touching, and the column is inset by the same amount on
+   both sides — so the group sits in the middle of its own column instead of against its left
+   edge. Written as a margin between neighbours and not as a `gap`, because the cell lays its
+   children out as text (`text-align: center` is what centres them) and the mark a cursor leaves
+   is measured off that same centre. */
+.lead :is(button, a) + :is(button, a) { margin-left: var(--gap); }
 
 /* The mark, on its own box, so the focus ring is not masked away. *Which* mark is the control's
    own business: it names one and the shape follows, the same division the toolbar's buttons
@@ -785,7 +806,10 @@ td.editable > .undo::before {
 tbody tr:hover .lead :is(button, a),
 .lead :is(button, a):focus-visible,
 tr.open .lead :is(button, a) { opacity: 1; }
-.lead :is(button, a):hover { color: var(--ink); }
+
+/* Pointed at, a control brightens and does nothing else. No box and no wash: this column is a
+   strip of marks, and a background behind one of them reads as a button the others are not. */
+.lead :is(button, a):hover:not(:disabled) { color: var(--mark-lit); }
 
 /* The record's claim, in one of the three positions the script resolves — free, this user's,
    somebody else's. One rule each, and neither side restates the other's half: the script says
@@ -796,25 +820,27 @@ tr.open .lead :is(button, a) { opacity: 1; }
    "una forma de ver si otro lockeó un registro". Free is hover-only, like the handle beside it:
    an offer, not news. A latch with nothing to offer does not answer the pointer at all. */
 .lead .latch[data-held="free"] { --mark: var(--icon-unlock); }
-.lead .latch[data-held="mine"] { --mark: var(--icon-lock); color: var(--brand-ink); opacity: 1; }
-.lead .latch[data-held="theirs"] { --mark: var(--icon-lock); color: var(--bad); opacity: 1; }
+.lead .latch[data-held="mine"] { --mark: var(--icon-lock); --mark-ink: var(--brand-ink); opacity: 1; }
+.lead .latch[data-held="theirs"] { --mark: var(--icon-lock); --mark-ink: var(--bad); opacity: 1; }
 .lead .latch:disabled { cursor: default; }
 .lead .latch[data-held="free"]:disabled { opacity: 0; }
 
-/* The row's undo (SCOPE 6g), the third slot. Hover-only and never news, unlike a held padlock:
-   it is an offer, like the handle. A row with nothing to put back — or a role that may not write
-   this table — has nothing to offer and does not answer the pointer at all, which is the rule the
-   free latch beside it already follows. */
-.lead .undo:disabled { opacity: 0; cursor: default; }
+/* The row's undo (SCOPE 6g), the third slot. Shown when the row is pointed at, like the two
+   beside it — and shown *whether or not* there is anything to put back, which is where it parts
+   company with the free latch: a latch with nothing to offer offers nothing, but a row's undo is
+   one of the three things this column always says about a line, and a slot that came and went
+   with the row's history would leave the pointer landing on a different control each time. With
+   nothing to undo it is drawn spent: dimmer than its neighbours, and not pressable. */
+.lead .undo:disabled {
+	--mark-ink: color-mix(in srgb, var(--faint) 45%, var(--raised));
+	cursor: default;
+}
 
-/* Pressed-ness as a wash rather than a change of ink: the ink is already carrying the position.
-   `color-mix` and not `opacity`, which would open a stacking context beside the sticky layering
-   this column depends on. */
-.lead :is(.latch, .undo):hover:not(:disabled) { background: color-mix(in srgb, currentColor 14%, transparent); }
-
-/* The open row is marked on its handle alone — the row itself never changes colour. */
+/* The open row is marked on its handle alone — the row itself never changes colour. Its controls
+   take the accent as their resting ink rather than as a colour outright, so one that is spent
+   still reads as spent and one under the pointer still brightens. */
 tr.open .lead { background: var(--brand-soft); }
-tr.open .lead :is(button, a) { color: var(--brand-ink); }
+tr.open .lead :is(button, a) { --mark-ink: var(--brand-ink); }
 
 /* The line another cursor is sitting on (SCOPE 6c/6d): a band in the colour of the circle that
    cursor belongs to, which is the whole of how the two are tied together.
@@ -853,12 +879,13 @@ tr.watched > td {
 .watcher {
 	position: absolute;
 	top: 50%;
-	/* over the handle, wherever the column settles: half the gutter undoes what the inset does to
-	   the cell's own centre, and half a slot per control *after* the first steps back from there
-	   to the first of them. `--slots` is how many the cell was given, written by `lead` from the
-	   children `Sheet.handle` handed it — so the mark follows the column rather than being told a
-	   second time how wide it is. Two of them is the old `(gutter - slot) / 2`, unchanged. */
-	left: calc(50% + (var(--gutter) - var(--slot) * (var(--slots) - 1)) / 2);
+	/* over the handle, wherever the column settles. The inset is the same on both sides, so the
+	   controls are centred on the cell's own centre and the gutter drops out of the arithmetic
+	   entirely: from there, half a step back per control *after* the first reaches the first of
+	   them. `--slots` is how many the cell was given, written by `lead` from the children
+	   `Sheet.handle` handed it — so the mark follows the column rather than being told a second
+	   time how wide it is. */
+	left: calc(50% - (var(--slots) - 1) * (var(--slot) + var(--gap)) / 2);
 	transform: translate(-50%, -50%);
 	display: grid;
 	place-content: center;
@@ -874,12 +901,14 @@ tr.watched > td {
 	transition: opacity .12s ease-out;
 }
 
-/* The mark stands aside for the control whose slot it is sitting in, and the pointer has to be on
-   the leading column itself to ask for it — that column is where the intent to open a row is,
-   and a row being read from anywhere else keeps the answer to whose cursor is on it. Aside and
-   not behind: what comes up is the plain handle, because who is looking at the row says nothing
-   about opening it. The mark takes no pointer events, so lying over the cell is not leaving it. */
-td.lead:hover .watcher { opacity: 0; }
+/* The mark stands aside for the control whose slot it is sitting in, and it does so when the
+   *row* is pointed at — the same moment, and the same reach, that brings the controls up. A mark
+   that waited for the pointer to reach its own column would have the handle coming up underneath
+   it and staying covered, which is one of the three controls answering the pointer differently
+   from the other two. Aside and not behind: what comes up is the plain handle, because who is
+   looking at the row says nothing about opening it. The mark takes no pointer events, so lying
+   over the cell is not leaving it. */
+tbody tr:hover .watcher { opacity: 0; }
 
 @media (prefers-reduced-motion: reduce) { .watcher { transition: none; } }
 
@@ -888,7 +917,21 @@ td.lead:hover .watcher { opacity: 0; }
 /* A cell that can be written into. The signal is the cell's own ring, not a tint across the whole
    row: what is about to be edited is one value, not the record. */
 td.editable { cursor: cell; position: relative; }
-td.editable:hover { outline: 1px solid var(--line); outline-offset: -1px; }
+
+/* The ring itself, drawn as a box of its own rather than as an `outline`, because an outline has
+   no sides and one of this ring's four sometimes belongs to somebody else (below). It sits where
+   the outline sat, to the pixel: an absolutely positioned child is laid out against the padding
+   box, so it is stretched back out over the two borders the cell draws — `--right-line` wide on
+   the right, because the last column draws none, and a pixel at the bottom. It answers no
+   pointer, so the cell underneath is still the thing being hovered, double-clicked and typed
+   into. */
+td.editable:hover::before {
+	content: "";
+	position: absolute;
+	inset: 0 calc(0px - var(--right-line)) -1px 0;
+	border: 1px solid var(--line);
+	pointer-events: none;
+}
 
 /* The cell's own undo (SCOPE 6g): drawn only on a cell that something was written over, and shown
    only while the pointer is on it — the same offer the handle makes, one value down. It lies over
@@ -914,11 +957,24 @@ td.editable > .undo {
 td.editable:hover > .undo, td.editable > .undo:focus-visible { opacity: 1; }
 td.editable > .undo:hover { color: var(--ink); }
 
-/* A line somebody's cursor is on is already drawn, and the ring is not drawn on top of it: it is
-   inset by a pixel, so it lands on the band the row is wearing and the pointer passing across
-   would rub out what the line is saying. The row keeps its colour and the cell says it can be
-   written into the way it already does everywhere else — with the cursor. */
-tr.watched td.editable:hover { outline: none; }
+/* A line somebody's cursor is on is already drawn, and the ring is not drawn on top of it: the
+   ring lands on the cell's own borders, which on this row are the band it is wearing, and the
+   pointer passing across would rub out what the line is saying. The row keeps its colour and the
+   cell says it can be written into the way it already does everywhere else — with the cursor. */
+tr.watched td.editable:hover::before { display: none; }
+
+/* The row *above* one has the same collision in a single place instead of four: its bottom border
+   is not the grid's line, it is the watched row's top edge, lent to it because a row's top edge
+   is never its own. So that one side of the ring stands down and the other three are drawn
+   exactly where they always are. Dropping the whole ring, the way the watched row does, would
+   cost an ordinary row the signal that its cells take values over a line it is only holding for
+   its neighbour; moving the whole ring a pixel inward would leave it out of step with every other
+   row in the column. One side is what is borrowed, so one side is what gives way.
+
+   It gives way by the ring stopping short of that pixel rather than merely not painting it: a box
+   that still reached the bottom edge would have its left and its right side spanning the borrowed
+   line's first and last pixel on the way down. The other three sides do not move. */
+tr.above-watched td.editable:hover::before { bottom: 0; border-bottom: 0; }
 
 /* The editor is laid over its cell, not placed inside it: an in-flow <input> carries an intrinsic
    width and would widen the column on opening. Out of flow it takes the cell's own box exactly —

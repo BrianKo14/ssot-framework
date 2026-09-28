@@ -1,5 +1,5 @@
 import { Router, type Request, type RequestHandler, type Response } from 'express';
-import { type Changes, changeStore, forgetting, logging, UNDO } from '../auth/changes.js';
+import { type Changes, changeStore, forgetting, logging, undoing, UNDO } from '../auth/changes.js';
 import type { Presence } from '../auth/presence.js';
 import type { Db } from '../db/postgres.js';
 import { equalities, filterConditions, parseFilter, where } from '../sql/filter.js';
@@ -132,8 +132,11 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, changes: Chan
 	const unheld = (req: Request, params: unknown[]): string[] =>
 		[`(${q(LOCK.name)} is null or ${q(LOCK.name)} = $${params.push(holder(req))})`];
 
-	/** Decide the reason why a write failed to match any row. */
-	const refuseUnmatched = async (req: Request, version: unknown): Promise<never> => {
+	/** Decide the reason why a write failed to match any row.
+	 * @param otherwise the reason to give when the record itself explains nothing — it is there,
+	 *        it is free, and it is at the version that was presented. A write that said something
+	 *        has none: all that is left is a race on the claim. */
+	const refuseUnmatched = async (req: Request, version: unknown, otherwise?: HttpError): Promise<never> => {
 		const params: unknown[] = [];
 		const addressed = where(equalities(addressedRow(req), params));
 		const [row] = await db.query(`select ${q(LOCK.name)} from ${table}${addressed}`, params);
@@ -143,6 +146,8 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, changes: Chan
 		const held = row[LOCK.name];
 
 		if (held !== null && held !== holder(req)) throw new HttpError(423, `locked by ${String(held)}`);
+
+		if (otherwise !== undefined) throw otherwise;
 
 		if (version === null) throw new HttpError(423, 'the record was locked');
 
@@ -344,6 +349,32 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, changes: Chan
 
 	// PATCH /:pk0[/:pk1...] — partial update
 	r.patch(byPk, update(body => updatable.filter(c => c.name in body)));
+
+	// PATCH /:pk0[/:pk1...]/_undo[?field=<column>] — undo from version history
+	r.patch(`${byPk}/${UNDO}`, wrap(async (req, res) => {
+		const field = askedField(req.query.field);
+		const record = addressedRow(req);
+		const at = addressOf(record);
+		const version = presentedVersion(req);
+
+		const params: unknown[] = [];
+		const addressed = [
+			...equalities(record, params),
+			...unchanged(version, params),
+			...unheld(req, params),
+		];
+
+		const rows = await db.query(undoing(t, updatable, params, at, field, addressed, cols), params);
+
+		if (!rows.length) {
+			const undone = (await changes.newest(t.entity, [at])).get(at) ?? {};
+			const nothing = !(field === null ? Object.keys(undone).length : field in undone);
+
+			await refuseUnmatched(req, version, nothing ? new HttpError(409, 'nothing to undo') : undefined);
+		}
+
+		res.json(await wire(rows[0]));
+	}));
 
 	// DELETE /:pk0[/:pk1...]
 	// DELETE FROM table WHERE pk_col1 = $1 AND pk_col2 = $2 ...

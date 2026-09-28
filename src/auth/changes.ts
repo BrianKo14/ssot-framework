@@ -28,9 +28,12 @@ const WRITTEN = [C_ENTITY, C_RECORD, C_FIELD, C_VERSION, C_WAS, C_BY];
 const SHOWN = [C_FIELD, C_WAS, C_VERSION, C_AT, C_BY];
 
 /** CTEs */
-const BEFORE = 'before', WROTE = 'wrote', PER_COLUMN = 'changed', GONE = 'gone';
+const BEFORE = 'before', WROTE = 'wrote', PER_COLUMN = 'changed', GONE = 'gone',
+	LAST = 'last', SPENT = 'spent', UNDONE = 'undone';
 
 const DIFFERS = 'differs';
+
+const AT = 'at', KEPT = 'kept';
 
 /** The column name for the undoable changes. */
 export const UNDO = '_undo';
@@ -93,6 +96,53 @@ export function logging({ t, given, addressed, by, params }: Writing, write: str
 		+ ` ${q(WROTE)} as (${write}),`
 		+ ` "logged" as (${logged})`
 		+ ` select ${answer} from ${q(WROTE)}`;
+}
+
+/** An undo action.
+ * It's a change being taken back, not a change.
+ * 
+ * @param given the columns an undo may write (the record's own)
+ * @param record the record's address, as the log spells it
+ * @param field one column's newest save (or null if undoing the whole row)
+ * @param addressed `where` clauses (record, version, claim)
+ * @param answer the columns to be returned */
+export function undoing(t: TableInfo, given: ColumnInfo[], params: unknown[],
+	record: string, field: string | null, addressed: string[], answer: string): string {
+
+	const entity = params.push(t.entity), address = params.push(record);
+	const named = field === null ? '' : ` and ${q(C_FIELD.name)} = $${params.push(field)}`;
+
+	/** The entries involved in the undo (one record's, or one of its columns') */
+	const mine = `${q(C_ENTITY.name)} = $${entity} and ${q(C_RECORD.name)} = $${address}${named}`;
+
+	// Select the newest version of the record
+	const last = `select max(${q(C_VERSION.name)}) as ${q(AT)} from ${table} where ${mine}`;
+	const spent = `select jsonb_object_agg(${q(C_FIELD.name)}, ${q(C_WAS.name)}) as ${q(KEPT)}`
+		+ ` from ${table}, ${q(LAST)}`
+		+ ` where ${mine} and ${q(C_VERSION.name)} = ${q(LAST)}.${q(AT)}`;
+
+	const back = (c: ColumnInfo) => {
+		const column = `$${params.push(c.name)}`;
+		const kept = `${q(SPENT)}.${q(KEPT)}`;
+
+		return `${q(c.name)} = case when jsonb_exists(${kept}, ${column})`
+			+ ` then (${kept} ->> ${column})::${c.type.sqlType} else ${q(c.name)} end`;
+	};
+
+	const write = `update ${tableRef(t)}`
+		+ ` set ${[...given.map(back), `${q(STAMP.name)} = ${q(STAMP.name)} + 1`].join(', ')}`
+		+ ` from ${q(SPENT)}`
+		+ `${where([...addressed, `${q(SPENT)}.${q(KEPT)} is not null`])} returning ${answer}`;
+
+	// Delete the record from the history log
+	const forgotten = `delete from ${table}`
+		+ ` where ${mine} and ${q(C_VERSION.name)} = (select ${q(AT)} from ${q(LAST)})`
+		+ ` and exists (select 1 from ${q(UNDONE)})`;
+
+	return `with ${q(LAST)} as (${last}), ${q(SPENT)} as (${spent}),`
+		+ ` ${q(UNDONE)} as (${write}),`
+		+ ` "forgotten" as (${forgotten})`
+		+ ` select ${answer} from ${q(UNDONE)}`;
 }
 
 /** A delete, wrapped so the record's history also goes

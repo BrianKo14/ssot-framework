@@ -90,6 +90,14 @@ const key = (t: TableMeta, row: Row) => valuesOf(t.pk, row);
 /** Where a row of `t` is read and written: `rowPath` addressed by the row's own key. */
 const rowAt = (t: TableMeta, row: Row, listing?: Listing) => rowPath(t.entity, key(t, row), listing);
 
+/** Where a row's last save is put back (SCOPE 6g): under the record, named the way the row names
+    what it carries of it — `_meta` says that name once and both the key and the route read it
+    from there.
+    @param field the one column being put back, or `null` for the whole save. */
+const undoAt = (t: TableMeta, row: Row, field: string | null) =>
+	`${rowAt(t, row)}/${encodeURIComponent(undoable)}`
+	+ (field === null ? '' : `?field=${encodeURIComponent(field)}`);
+
 /** What the server answers a write with when the row it addresses is no longer the row that was
     read (SCOPE 6f). It is the one refusal that is about *when* the write was made, not about
     what it said, so it is the one the screen answers by reloading rather than by marking a field. */
@@ -213,10 +221,6 @@ const lastSave = (row: Row): Change[] => {
 	return changes.filter(c => Number(c.version) === newest);
 };
 
-/** What an undo sends: the values the log kept, under the columns they were kept for. An ordinary
-    body, so the claim, the version and the policy all answer it as they answer any other write. */
-const putBack = (changes: Change[]): Row => Object.fromEntries(changes.map(c => [c.field, c.was]));
-
 /** A timestamp as a person reads one; the seconds a clock keeps are not what is being asked. */
 const when = (at: string) => at.slice(0, 16);
 
@@ -227,12 +231,16 @@ const undoLabel = (changes: Change[]) =>
 		? 'Sin cambios para deshacer'
 		: `Deshacer ${count(changes.length, 'cambio')} de ${changes[0].by} (${when(changes[0].at)})`;
 
-/** Puts back what a write overwrote. An undo is an ordinary write and nothing about it is
-    special-cased anywhere: it goes through `patched`, carries the version the row was read at,
-    and is refused by a claim exactly as a typed value would be. */
-async function undoing(s: Sheet, row: Row, changes: Change[], button: HTMLButtonElement): Promise<void> {
-	if (!changes.length) return;
+/** Puts back what a write overwrote. Which save that is, the server reads off the log: the values
+    are the log's and the log is there, so the browser asks for the undo rather than describing
+    it, and there is one place that decides what the newest save was.
 
+    An undo carries the version the row was read at and is refused by a claim exactly as a typed
+    value would be — it is a `PATCH` like any other, on the record's `_undo` instead of on its
+    columns.
+
+    @param field the one column being put back, or `null` for the row's whole last save. */
+async function undoing(s: Sheet, row: Row, field: string | null, button: HTMLButtonElement): Promise<void> {
 	const at = addressOf(s.t, row);
 	const tr = button.closest('tr');
 
@@ -240,14 +248,14 @@ async function undoing(s: Sheet, row: Row, changes: Change[], button: HTMLButton
 	say('Deshaciendo…', 'busy');
 
 	try {
-		await patched(s, row, putBack(changes));
+		await undone(s, row, field);
 		say(summary(s));
 	} catch (err) {
 		if (sessionEnded(err)) { location.reload(); return; }
 
 		say(refused(err) ? refusal(err, at) : (err as Error).message, 'error');
 	} finally {
-		// whichever way it went, `patched` has left the row holding what the server holds
+		// whichever way it went, `undone` has left the row holding what the server holds
 		if (tr?.isConnected) fill(tr, s, row);
 
 		refreshPeek(s.t, row);
@@ -309,7 +317,7 @@ const cellUndo = (s: Sheet, row: Row, back: Change) => {
 	button.type = 'button';
 	button.title = label;
 	button.setAttribute('aria-label', `${back.field}: ${label}`);
-	button.addEventListener('click', e => { e.stopPropagation(); void undoing(s, row, [back], button); });
+	button.addEventListener('click', e => { e.stopPropagation(); void undoing(s, row, back.field, button); });
 	button.addEventListener('dblclick', e => e.stopPropagation());
 
 	return button;
@@ -482,9 +490,9 @@ const undo = (s: Sheet, row: Row) => {
 	const button = classed('button', 'undo');
 
 	button.type = 'button';
-	// read at the press, not at the build: the row is mutated in place and this button outlives
-	// every redraw of the line, so what it would put back is whatever the row says by then
-	button.addEventListener('click', () => void undoing(s, row, lastSave(row), button));
+	// it names no save: this button outlives every redraw of the line, and the newest one is
+	// whatever the log holds at the press — which is the server's to read, not the screen's
+	button.addEventListener('click', () => void undoing(s, row, null, button));
 
 	return button;
 };
@@ -1110,15 +1118,13 @@ const record = (s: Sheet, row: Row, button: HTMLButtonElement): Peeked => {
     columns borrowed from an ancestor — that same row read again with them. Writing an fk moves
     the row under a different ancestor, so what was borrowed beside it is the old one's until it
     is asked for again. That second read is the `GET` of a record with reached columns (7a).
-    The one place a written row is put back, so a cell edit and the panel cannot disagree. */
-async function patched(s: Sheet, row: Row, body: Row): Promise<void> {
-	const { t } = s;
+    The one place a written row is put back, so a cell edit, an undo and the panel cannot
+    disagree — each says only *which* write it is, and what a written row becomes is said once. */
+async function written(s: Sheet, row: Row, write: () => Promise<Row>): Promise<void> {
 	let saved: Row;
 
 	try {
-		// the version the row was read at goes with it, so a row that moved on in between
-		// refuses the write instead of taking it (SCOPE 7c)
-		saved = await api<Row>(rowAt(t, row), sending('PATCH', body, row[stamp]));
+		saved = await write();
 	} catch (err) {
 		// the refusal is the news; a re-read that also fails must not replace it
 		if (refused(err)) await reread(s, row).catch(() => undefined);
@@ -1130,8 +1136,19 @@ async function patched(s: Sheet, row: Row, body: Row): Promise<void> {
 
 	const borrowing = reached(s.columns);
 
-	if (borrowing.length) Object.assign(row, await api<Row>(rowAt(t, row, { reached: borrowing })));
+	if (borrowing.length) Object.assign(row, await api<Row>(rowAt(s.t, row, { reached: borrowing })));
 }
+
+/** Writing the values that were typed. The version the row was read at goes with it, so a row
+    that moved on in between refuses the write instead of taking it (SCOPE 7c). */
+const patched = (s: Sheet, row: Row, body: Row): Promise<void> =>
+	written(s, row, () => api<Row>(rowAt(s.t, row), sending('PATCH', body, row[stamp])));
+
+/** Putting back what the newest save overwrote (SCOPE 6g) — the record's, or one column's. It
+    sends no values: the log kept them and the server reads them there. Conditional on the row's
+    version like any other write, and answered with the row as it now is. */
+const undone = (s: Sheet, row: Row, field: string | null): Promise<void> =>
+	written(s, row, () => api<Row>(undoAt(s.t, row, field), sending('PATCH', undefined, row[stamp])));
 
 /** A new row being inserted. Every column is writable, pk included, and it all goes in one
     POST to the entity's collection. */

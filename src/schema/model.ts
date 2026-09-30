@@ -49,5 +49,6 @@ export interface TableInfo {
 	byName: Columns;			// the same ColumnInfo objects, indexed
 	references: ReferenceInfo[];		// fks this table declares
 	details: ReferenceInfo[];		// fks *into* this table from tables that are details of it
+	referencedBy: ReferenceInfo[];		// every fk *into* this table, detail or not
 	access: Access;				// who may do what here; see `schema/access.ts`
 }

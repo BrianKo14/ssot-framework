@@ -1,4 +1,5 @@
 import { Router, type Request, type RequestHandler, type Response } from 'express';
+import { family, type Send } from './children.js';
 import { type Changes, changeStore, forgetting, logging, undoing, UNDO } from '../auth/changes.js';
 import type { Presence } from '../auth/presence.js';
 import type { Db } from '../db/postgres.js';
@@ -36,6 +37,26 @@ const detailPath = (ref: ReferenceInfo) => `${segments(masterParams(ref))}/${ref
  * Only if its fk matches the master's *primary* key. */
 const isNestable = (ref: ReferenceInfo) =>
 	ref.targetColumns.length === ref.to.pk.length && ref.targetColumns.every(c => ref.to.pk.includes(c));
+
+
+
+// --- ROWS ON THE WIRE ---
+
+/** A record's address, checked by the pk's handler. */
+const addressIn = (t: TableInfo) => (row: Record<string, unknown>) => t.pk.map(c => String(row[c.name])).join('/');
+
+/** Stamped with the row's version. */
+const stamped = (columns: ColumnInfo[], row: Record<string, unknown>): Record<string, unknown> =>
+	({ ...rowValues(columns, row), [STAMP.name]: String(row[STAMP.name]) });
+
+/** The rows of a table as they go out.
+ * Columns + version + last overwrite. A child row goes out the same way (see `children.ts`). */
+const sender = (changes: Changes): Send => async (t, columns, rows) => {
+	const addressOf = addressIn(t);
+	const undoable = await changes.newest(t.entity, rows.map(addressOf));
+
+	return rows.map(row => ({ ...stamped(columns, row), [UNDO]: undoable.get(addressOf(row)) ?? {} }));
+};
 
 
 
@@ -89,20 +110,10 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, changes: Chan
 		return { ...given, ...Object.fromEntries(fromMaster.map(([name, param]) => [name, req.params[param]])) };
 	};
 
-	/** A record's address, checked by the pk's handler. */
-	const addressOf = (row: Record<string, unknown>) => t.pk.map(c => String(row[c.name])).join('/');
+	const addressOf = addressIn(t);
 
-	/** Stamped with the row's version. */
-	const stamped = (columns: ColumnInfo[], row: Record<string, unknown>): Record<string, unknown> =>
-		({ ...rowValues(columns, row), [STAMP.name]: String(row[STAMP.name]) });
-
-	/** The rows as they go out.
-	 * Columns + version + last overwrite. */
-	const sent = async (columns: ColumnInfo[], rows: Record<string, unknown>[]) => {
-		const undoable = await changes.newest(t.entity, rows.map(addressOf));
-
-		return rows.map(row => ({ ...stamped(columns, row), [UNDO]: undoable.get(addressOf(row)) ?? {} }));
-	};
+	const send = sender(changes);
+	const sent = (columns: ColumnInfo[], rows: Record<string, unknown>[]) => send(t, columns, rows);
 
 	const wire = async (row: Record<string, unknown>) => (await sent(t.columns, [row]))[0];
 
@@ -163,17 +174,20 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, changes: Chan
 		const asked = parseReached(req.query.with);
 		const read = reading(t, [...asked, ...Object.keys(raw)], readableBy(req));
 		const columns = read.shown(asked);
+		const kin = family(db, send, t, req.query.children, readableBy(req));		// before the query: a bad tree costs no round trip
 
 		const params: unknown[] = [];
 		const filtered = where(filterConditions(read.byName, raw, params, read.at));
 
-		const rows = await db.query(
-			`${read.statement([...columns, STAMP], filtered)} order by ${read.order}`, params);	// sort by primary key
+		const rows = await sent(columns, await db.query(
+			`${read.statement([...columns, STAMP], filtered)} order by ${read.order}`, params));	// sort by primary key
 
-		return { columns, rows: await sent(columns, rows) };
+		await kin.attach(rows, read, filtered, params);
+
+		return { columns, rows };
 	};
 
-	// GET /[?filter={"col":value,"col2":{"op":"ge","value":…},...}][&with=["fk.col",…]][&format=xlsx|txt]
+	// GET /[?filter={"col":value,"col2":{"op":"ge","value":…},...}][&with=["fk.col",…]][&children=["entity",{"entity":…,"fk":…},…]][&format=xlsx|txt]
 	r.get('/', wrap(async (req, res) => {
 		const format = formatNamed(req.query.format);					// before the query: a bad format costs no round trip
 		const { columns, rows } = await listRows(req);
@@ -264,21 +278,24 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, changes: Chan
 		res.json(await changes.history(t.entity, addressOf(record), field, now));
 	}));
 
-	// GET /:pk0[/:pk1...][?with=["fk.col",…]]
+	// GET /:pk0[/:pk1...][?with=["fk.col",…]][&children=["entity",{"entity":…,"fk":…},…]]
 	// SELECT cols FROM table [LEFT JOIN reached...] WHERE pk_col1 = $1 AND pk_col2 = $2 ...
 	r.get(byPk, wrap(async (req, res) => {
 		const asked = parseReached(req.query.with);
 		const read = reading(t, asked, readableBy(req));
 		const columns = read.shown(asked);
+		const kin = family(db, send, t, req.query.children, readableBy(req));
 
 		const params: unknown[] = [];
 		const addressed = where(equalities(addressedRow(req), params, atBase));
 
-		const rows = await db.query(read.statement([...columns, STAMP], addressed), params);
+		const rows = await sent(columns, await db.query(read.statement([...columns, STAMP], addressed), params));
 
 		if (!rows.length) { res.status(404).json({ error: 'not found' }); return; }
 
-		res.json((await sent(columns, rows))[0]);
+		await kin.attach(rows, read, addressed, params);
+
+		res.json(rows[0]);
 	}));
 
 	// POST /

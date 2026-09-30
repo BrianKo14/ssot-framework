@@ -98,6 +98,7 @@ function tableInfo(
 		byName,
 		references: [],				// filled by linkReferences, later once every table exists
 		details: [],
+		referencedBy: [],
 		access: accessOf(entityName, info.access),
 	};
 }
@@ -129,6 +130,7 @@ function linkReferences(from: TableInfo, fks: EntityInfo<AnySystem>['fks'], tabl
 		};
 
 		from.references.push(reference);
+		to.referencedBy.push(reference);
 		if (reference.isDetail) to.details.push(reference);
 	}
 }

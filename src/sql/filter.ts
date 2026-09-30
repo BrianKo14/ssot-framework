@@ -86,7 +86,7 @@ export function jsonParam<T>(raw: unknown, what: string, shape: string, is: (x: 
 	return parsed;
 }
 
-const isObject = (x: unknown): x is Record<string, unknown> =>
+export const isObject = (x: unknown): x is Record<string, unknown> =>
 	x !== null && typeof x === 'object' && !Array.isArray(x);
 
 export const parseFilter = (raw: unknown): Record<string, unknown> =>

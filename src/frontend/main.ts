@@ -7,13 +7,14 @@ import { ancestryPicker, type AncestryPicker } from './ancestry.js';
 import { api, ApiError, sending } from './api.js';
 import { authenticated, sessionEnded, type Session } from './auth.js';
 import type { Grid } from './clipboard.js';
-import { byId, classed, el } from './dom.js';
+import { byId, classed, el, lead } from './dom.js';
 import { download } from './export.js';
 import { filterBar, type FilterBar } from './filters.js';
 import {
 	type Ancestor, type Detail, detailsOf, keyThrough, kinshipOf, ownColumns, type Reachable,
 	reachedColumn, reachedName, referencesOf, targetOf, valuesFrom, valuesOf,
 } from './fk.js';
+import { MONITOR, type Monitor, monitorScreen } from './monitor.js';
 import { picker, type Picker } from './picker.js';
 import { watching, type Watch } from './presence.js';
 import { changesPath, filterQuery, type Listing, listPath, rowPath } from './query.js';
@@ -27,6 +28,8 @@ type Row = Record<string, unknown>;
 // --- DOM ---
 
 const 	nav = byId('entities'),
+	tools = byId('tools'),
+	toolsTitle = byId('tools-title'),
 	toolbar = byId('toolbar'),
 	headerEnd = byId('header-end'),
 	heading = byId('title'),
@@ -431,21 +434,6 @@ const field = (p: Peeked) => (c: ColumnMeta) => {
 	box.append(peekInput(c, p, box));
 
 	return [label, box];
-};
-
-/** The grid's sticky leading column.
-
-    How many controls it was given is written on the cell, because the mark a cursor leaves has to
-    find the first of them and only this cell knows how many there are. It is counted off the
-    children rather than declared, so it follows what `Sheet.handle` gave it and no sheet is asked
-    a second time which one it is. */
-const lead = (tag: 'th' | 'td', ...children: Node[]) => {
-	const node = el(tag, ...children);
-
-	node.className = 'lead';
-	node.style.setProperty('--slots', String(children.length));
-
-	return node;
 };
 
 /** The screen's leading cell: the handle that opens the row in the side panel, which is where the
@@ -2002,6 +1990,20 @@ const link = (t: TableMeta) => {
 };
 
 
+/** The monitor's address; the user picked on it, if any, is its key: `/_monitor/cocina`. */
+const monitorAt = (picked: string[]) => route.href({ screen: MONITOR, key: picked, conditions: [] });
+
+/** The rail's line for the monitor, beside the tables' but under a heading of its own. */
+const monitorLink = () => {
+	const a = el('a', classed('span', 'name', 'Monitor'));
+
+	a.href = monitorAt([]);
+	a.dataset.entity = MONITOR;
+
+	return a;
+};
+
+
 // --- Screens ---
 
 let tables: TableMeta[] = [];
@@ -2029,6 +2031,8 @@ let inserts!: ActionMenu;
 let exports!: ActionMenu;
 let ancestry!: AncestryPicker;
 let route!: Router;
+/** Built in `main` only when the role may read the monitor; without it there is no such screen. */
+let observer: Monitor | undefined;
 
 /** The address for what is on screen now, assembled from the screen and the bar themselves. */
 const here = (record: string[] = []): View =>
@@ -2082,18 +2086,51 @@ const reopen = (s: Sheet, wanted: string[], data: Row[]): boolean => {
 
 /** Draws what the address says. Every move — a link, the filter bar, Back — ends here, so what
     is on screen and the address can't come apart. */
+/** Marks the rail's line for the screen being drawn, and only that one. */
+const current = (name: string) => {
+	for (const a of [...nav.querySelectorAll('a'), ...tools.querySelectorAll('a')])
+		a.setAttribute('aria-current', String(a.dataset.entity === name));
+};
+
+/** What a table's screen has and the monitor has not: its filters, inserts and exports. Only ever
+    put away: a table's screen brings each back by resetting it to itself. */
+const hideTableChrome = () => {
+	for (const part of [filters.element, inserts.element, exports.element]) part.hidden = true;
+};
+
+/** The monitor instead of a table's grid (SCOPE 8a, 8b). Nobody is *on* it, as presence counts:
+    it is no table's screen.
+    @param picked the user whose actions it shows, as the address names them */
+const monitoring = (seen: Monitor, picked: string | null) => {
+	status.standing(route, []);
+	status.standing(grid, []);
+	current(MONITOR);
+	blank();
+	hideTableChrome();
+	heading.replaceChildren('Monitor');
+	screen = null;
+	sheet = null;
+	watch.at(null, [], []);
+	busy('Cargando…');
+	seen.show(picked);
+};
+
 async function draw(): Promise<void> {
 	const { view, unresolved } = route.read();
+
+	if (view.screen === MONITOR && observer) { monitoring(observer, view.key[0] ?? null); return; }
+
 	const t = tables.find(x => x.entity === view.screen);
 
 	if (!t) { route.go({ screen: tables[0].entity, key: [], conditions: [] }, true); return; }
+
+	observer?.stop();
 
 	// what was wrong with the last address, and with the last try at drawing one, is not now
 	status.standing(route, []);
 	status.standing(grid, []);
 
-	for (const a of nav.querySelectorAll('a'))
-		a.setAttribute('aria-current', String(a.dataset.entity === t.entity));
+	current(t.entity);
 
 	heading.replaceChildren(t.entity, grants(t));
 	screen = t;
@@ -2170,7 +2207,21 @@ async function main(): Promise<void> {
 	route = router(meta);
 
 	nav.replaceChildren(...tables.map(link));
-	toolbar.append(filters.element, inserts.element);
+
+	if (meta.monitor) {
+		observer = monitorScreen({
+			meta: meta.monitor, operators: meta.operators, seconds: meta.pollSeconds, status,
+			hrefOf: user => monitorAt([user]),
+			close: () => route.go({ screen: MONITOR, key: [], conditions: [] }),
+			// The rail says who is on each screen here as on any other; nobody is on this one.
+			tab: () => watch.tab(),
+			seen: viewers => showViewers(viewers, []),
+		});
+		tools.replaceChildren(monitorLink());
+		toolsTitle.hidden = false;
+	}
+
+	toolbar.append(filters.element, inserts.element, ...(observer ? [observer.bar] : []));
 	headerEnd.prepend(watchers);		// ahead of the counts: who is here, then what is here
 	headerEnd.append(exports.element);
 	peekTabbar.append(details.element);	// outside the tabs' scroll box, so its list can escape it

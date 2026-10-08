@@ -14,6 +14,10 @@
 	<h2>Entidades</h2>
 	<nav id="entities"></nav>
 
+	<!-- The framework's own screens, for whoever the application granted them -->
+	<h2 id="tools-title" hidden>Sistema</h2>
+	<nav id="tools" aria-labelledby="tools-title"></nav>
+
 	<!-- Current user info -->
 	<div id="account" hidden>
 		<span id="account-who">
@@ -42,6 +46,8 @@
 			<tbody id="rows"></tbody>
 		</table>
 		<p id="empty" hidden>La entidad no tiene registros.</p>
+		<!-- Who is signed in (SCOPE 8a); a line opens #watch for that user -->
+		<div id="monitor" hidden></div>
 	</div>
 </main>
 
@@ -87,6 +93,18 @@
 		</h3>
 		<ol id="peek-changes-list" hidden></ol>
 	</section>
+</section>
+
+<!-- One signed-in user, opened from the monitor: their open tabs and everything they did (SCOPE 8a, 8b) -->
+<section id="watch" hidden aria-labelledby="watch-title">
+	<header>
+		<div>
+			<small id="watch-kind">Usuario</small>
+			<h2 id="watch-title"></h2>
+		</div>
+		<button id="watch-close" type="button" title="Cerrar" aria-label="Cerrar"></button>
+	</header>
+	<div id="watch-body"></div>
 </section>
 
 <!-- Fields borrowed from the tables this one points at -->

@@ -1,12 +1,15 @@
 // The `/api/_meta` endpoint: schema info for the frontend to use
 
 import { Router } from 'express';
-import type { ColumnMeta, ReferenceMeta, SystemMeta, TableMeta } from '../shared/api.js';
+import type { ColumnMeta, MonitorMeta, ReferenceMeta, SystemMeta, TableMeta } from '../shared/api.js';
 import { formatMeta } from '../format/registry.js';
 import { DEFAULT_OP, operatorMeta } from '../sql/filter.js';
 import { allows, CAPABILITIES } from '../schema/access.js';
+import { ACTION_FILTERS, USER_FILTERS } from '../auth/activity.js';
+import { activityTable } from '../auth/entities.js';
 import { UNDO } from '../auth/changes.js';
 import type { ColumnInfo, ReferenceInfo, TableInfo } from '../schema/model.js';
+import type { Guarded } from './permission.js';
 import { STAMP } from '../schema/reserved.js';
 
 /** Name of the metadata endpoint. */
@@ -32,7 +35,17 @@ const tableMeta = (t: TableInfo): Omit<TableMeta, 'capabilities' | 'references'>
 	({ entity: t.entity, pk: t.pk.map(c => c.name), columns: t.columns.map(columnMeta) });
 
 
-export function metaRouter(tables: TableInfo[], pollSeconds: number): Router {
+/** One of the monitor's lists, described as a table is, so the filter bar takes it as one. */
+const listMeta = (entity: string, columns: ColumnInfo[]): TableMeta =>
+	({ entity, pk: [], columns: columns.map(columnMeta), references: [], capabilities: ['read'] });
+
+/** What the monitor's two filter bars can filter (SCOPE 8a): its users, and one user's actions. */
+const monitorMeta = (monitor: Guarded): MonitorMeta =>
+	({ users: listMeta(monitor.entity, USER_FILTERS), actions: listMeta(activityTable.entity, ACTION_FILTERS) });
+
+export function metaRouter(tables: TableInfo[], pollSeconds: number, monitor: Guarded): Router {
+
+	const watching = monitorMeta(monitor);
 
 	/** A list of all tables, with their metadata and references */
 	const described = tables.map(t =>
@@ -57,6 +70,7 @@ export function metaRouter(tables: TableInfo[], pollSeconds: number): Router {
 			stamp: STAMP.name,
 			undo: UNDO,
 			pollSeconds,
+			monitor: role !== undefined && allows(monitor.access, role, 'read') ? watching : null,
 		} satisfies SystemMeta);
 	});
 }

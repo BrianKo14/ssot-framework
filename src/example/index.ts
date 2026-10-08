@@ -1,6 +1,6 @@
 // Starts the live server
 
 import { serve } from '../serve.js';
-import { tables } from './system.js';
+import { monitor, tables } from './system.js';
 
-await serve(tables);
+await serve(tables, { monitor });

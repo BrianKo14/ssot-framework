@@ -6,6 +6,7 @@ import type { ColumnInfo, TableInfo } from '../schema/model.js';
 import { checkedValues, rowValues } from '../schema/values.js';
 import { equalities, where } from '../sql/filter.js';
 import { columnList, q, tableRef } from '../sql/identifier.js';
+import { upsert } from '../sql/upsert.js';
 import { token as tokenType } from '../types/builtin.js';
 import { col, credentialTable, password as PASSWORD, sessionTable, userTable } from './entities.js';
 import { digestOf, dummyHash, hashPassword, mintToken, verifyPassword } from './hash.js';
@@ -92,18 +93,8 @@ export function dbAuthenticator(db: Db, sessionTtl: string): Authenticator & {
 	}
 
 	/** Insert or update one row of an auth table, addressed by `key`. */
-	async function upsert(t: TableInfo, cols: ColumnInfo[], values: Record<string, unknown>, key: ColumnInfo[]) {
-		const params: unknown[] = [];
-		const ph = cols.map(c => `$${params.push(values[c.name])}`).join(', ');
-		const rest = cols.filter(c => !key.includes(c));
-
-		const onConflict = rest.length
-			? `do update set ${rest.map(c => `${q(c.name)} = excluded.${q(c.name)}`).join(', ')}`
-			: 'do nothing';
-
-		await db.query(
-			`insert into ${tableRef(t)} (${columnList(cols)}) values (${ph})`
-			+ ` on conflict (${columnList(key)}) ${onConflict}`, params);
+	async function save(t: TableInfo, cols: ColumnInfo[], values: Record<string, unknown>, key: ColumnInfo[]) {
+		await db.query(upsert(t, key, cols), cols.map(c => values[c.name]));
 	}
 
 	async function forgetSessionsOf(username: unknown): Promise<void> {
@@ -197,7 +188,7 @@ export function dbAuthenticator(db: Db, sessionTtl: string): Authenticator & {
 				[U_ACTIVE.name]: profile.active ?? existing?.[U_ACTIVE.name] ?? true,
 			}, true);
 
-			await upsert(userTable, USER_COLUMNS, values, [U_USERNAME]);
+			await save(userTable, USER_COLUMNS, values, [U_USERNAME]);
 
 			if (password === undefined) return;
 
@@ -208,7 +199,7 @@ export function dbAuthenticator(db: Db, sessionTtl: string): Authenticator & {
 				[C_HASH.name]: await hashPassword(password),
 			}, true);
 
-			await upsert(credentialTable, [C_USER, C_HASH], credential, [C_USER]);
+			await save(credentialTable, [C_USER, C_HASH], credential, [C_USER]);
 
 			// A password change ends every session opened with the old one
 			await forgetSessionsOf(values[U_USERNAME.name]);

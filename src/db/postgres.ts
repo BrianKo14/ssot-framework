@@ -27,6 +27,24 @@ const asHttpError = (err: unknown): unknown => {
 
 
 
+// --- Reading a statement back ---
+
+/** Converts a value to a string representation that can be used in a SQL query. */
+const literal = (value: unknown): string => {
+  if (value === null || value === undefined) return 'null';
+  if (typeof value === 'number' || typeof value === 'bigint' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return `array[${value.map(literal).join(', ')}]`;
+
+  return pg.escapeLiteral(typeof value === 'string' ? value : JSON.stringify(value));
+};
+
+/** A SQL statement with its values inserted in place of placeholders.
+ * E.g. `withValues('select * from t where a = $1 and b = $2', [1, 'x'])` */
+export const withValues = (text: string, params: unknown[] = []): string =>
+  text.replace(/\$(\d+)/g, (placeholder, n: string) => (Number(n) <= params.length ? literal(params[Number(n) - 1]) : placeholder));
+
+
+
 // --- CONNECTION ---
 
 export async function connect(databaseUrl: string): Promise<Db> {

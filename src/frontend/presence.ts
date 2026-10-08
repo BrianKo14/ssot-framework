@@ -23,6 +23,9 @@ export interface Watch {
 	/** Asks again at once, without having moved. For when this tab has just changed something
 	 * the answer reports — a claim taken or let go — and should not wait a round to see it. */
 	now(): void;
+
+	/** This tab's name, once the server has minted it: for another poll that must leave it out. */
+	tab(): string | null;
 }
 
 /** @param seconds what `_meta` published, which is also what the server counts a tab present
@@ -120,5 +123,7 @@ export function watching(seconds: number, drawn: (viewers: Viewer[], locks: Lock
 		},
 
 		now() { void ask(); },
+
+		tab: () => tab,
 	};
 }

@@ -3,8 +3,9 @@
 import type { Db } from '../db/postgres.js';
 import { checkedValues, rowValues } from '../schema/values.js';
 import type { Viewer, Watching } from '../shared/api.js';
-import { equalities, where } from '../sql/filter.js';
+import { where } from '../sql/filter.js';
 import { columnList, q, tableRef } from '../sql/identifier.js';
+import { upsert } from '../sql/upsert.js';
 import { token as tokenType } from '../types/builtin.js';
 import { col, presenceTable } from './entities.js';
 import { digestOf, mintToken } from './hash.js';
@@ -57,6 +58,9 @@ export type Seen = Omit<Watching, 'locks'>;
 export interface Presence {
 	/** Returns the set of tabs that are currently present and watching something. */
 	see(at: At): Promise<Seen>;
+
+	/** Every tab still present, whoever is watching. */
+	tabs(within: string[], except: unknown): Promise<Viewer[]>;
 }
 
 
@@ -71,15 +75,26 @@ export function presenceStore(db: Db, pollSeconds: number): Presence {
 
 	/** Updates the presence record for the given tab. */
 	const arrive = async (values: Record<string, unknown>): Promise<void> => {
-		const params = PRESENTED.map(c => values[c.name]);
-		const ph = PRESENTED.map((_, i) => `$${i + 1}`).join(', ');
-		const moved = [...PRESENTED.filter(c => c !== P_TAB), P_SEEN_AT];
+		await db.query(upsert(presenceTable, [P_TAB], PRESENTED, [P_SEEN_AT]), PRESENTED.map(c => values[c.name]));
+	};
 
-		await db.query(
-			`insert into ${table} (${columnList([...PRESENTED, P_SEEN_AT])}) values (${ph}, now())`
-			+ ` on conflict (${columnList([P_TAB])})`
-			+ ` do update set ${moved.map(c => `${q(c.name)} = excluded.${q(c.name)}`).join(', ')}`,
-			params);
+	/** The tabs still present, as others are shown them.
+	 * @param conds further conditions, whose parameters are already in `params` */
+	const present = async (conds: string[], params: unknown[]): Promise<Viewer[]> => {
+		const rows = await db.query(
+			`select ${columnList(SHOWN)} from ${table}${where([...conds, fresh(params)])}`
+			+ ` order by ${columnList([P_ENTITY, P_USER, P_TAB])}`, params);
+
+		return rows.map(row => {
+			const seen = rowValues(SHOWN, row);
+
+			return {
+				id: digestOf(String(seen[P_TAB.name])).slice(0, ID_CHARS),
+				user: String(seen[P_USER.name]),
+				entity: String(seen[P_ENTITY.name]),
+				records: occupying(seen[P_RECORD.name], seen[P_OPENED.name]),
+			};
+		});
 	};
 
 	return {
@@ -101,32 +116,25 @@ export function presenceStore(db: Db, pollSeconds: number): Presence {
 			}, true));
 
 			const params: unknown[] = [];
-			/** Conditions to filter the presence records. */
-			const conds = [
+			const viewers = await present([
 				// Only the entities the caller may be told about, per their role.
 				`${q(P_ENTITY.name)} = any($${params.push(within)}::text[])`,
-				// Only the tabs that are still present.
-				fresh(params),
 				// Don't tell the caller about their own tab.
 				`${q(P_TAB.name)} <> $${params.push(name)}`,
-			];
-
-			const rows = await db.query(
-				`select ${columnList(SHOWN)} from ${table}${where(conds)}`
-				+ ` order by ${columnList([P_ENTITY, P_USER, P_TAB])}`, params);
-
-			const viewers: Viewer[] = rows.map(row => {
-				const seen = rowValues(SHOWN, row);
-
-				return {
-					id: digestOf(String(seen[P_TAB.name])).slice(0, ID_CHARS),
-					user: String(seen[P_USER.name]),
-					entity: String(seen[P_ENTITY.name]),
-					records: occupying(seen[P_RECORD.name], seen[P_OPENED.name]),
-				};
-			});
+			], params);
 
 			return { tab: name, viewers };
+		},
+
+		tabs(within, except) {
+			const params: unknown[] = [];
+			const asking = tokenType.check(except);
+
+			return present([
+				`${q(P_ENTITY.name)} = any($${params.push(within)}::text[])`,
+				// Not the asking tab, as `see` leaves it out: its row outlives the screen it left.
+				...(asking.ok ? [`${q(P_TAB.name)} <> $${params.push(asking.value)}`] : []),
+			], params);
 		},
 	};
 }

@@ -50,6 +50,8 @@
 	   from. It reads as one motion reversed, which is what the button does — and it leans left,
 	   away from the padlock's upright body, so the two do not read as a pair at this size. */
 	--icon-undo: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.4 3.4 3.4 6.4l3 3"/><path d="M3.4 6.4h5.8a3.2 3.2 0 0 1 0 6.4H6.4"/></svg>');
+	/* The monitor (SCOPE 8a): a pulse, since what it shows is what is happening now. */
+	--icon-pulse: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1.8 8.4h2.8l1.7-4.2 3.2 8 1.7-3.8h3"/></svg>');
 }
 
 @media (prefers-color-scheme: dark) {
@@ -149,8 +151,8 @@ aside h2 {
 	color: var(--faint);
 }
 
-#entities { display: flex; flex-direction: column; gap: 1px; }
-#entities a {
+:is(#entities, #tools) { display: flex; flex-direction: column; gap: 1px; }
+:is(#entities, #tools) a {
 	display: flex;
 	align-items: center;
 	gap: .5rem;
@@ -194,7 +196,7 @@ aside h2 {
    edge inwards instead of centred on the circle, which would put them past it and out of sight. */
 #entities .viewer::after { left: auto; right: 0; transform: none; }
 #entities .viewer::before { left: auto; right: .3125rem; transform: none; }
-#entities a::before {
+:is(#entities, #tools) a::before {
 	content: "";
 	flex: none;
 	width: 1rem;
@@ -203,11 +205,18 @@ aside h2 {
 	-webkit-mask: var(--icon-table) center / contain no-repeat;
 	mask: var(--icon-table) center / contain no-repeat;
 }
-#entities a:hover { background: var(--hover); color: var(--ink); }
-#entities a[aria-current="true"] {
+:is(#entities, #tools) a:hover { background: var(--hover); color: var(--ink); }
+:is(#entities, #tools) a[aria-current="true"] {
 	background: var(--brand-soft);
 	color: var(--brand-ink);
 	font-weight: 500;
+}
+
+/* The framework's own screens: a heading apart from the entities, and an icon that is not a table's. */
+#tools-title { margin-top: 1rem; }
+#tools a::before {
+	-webkit-mask-image: var(--icon-pulse);
+	mask-image: var(--icon-pulse);
 }
 
 
@@ -512,6 +521,7 @@ main > header {
 	background: var(--surface);
 }
 #toolbar:empty { display: none; }
+#toolbar[hidden] { display: none; }		/* the monitor has none; `display: flex` would otherwise outvote the attribute */
 
 /* What can be done to the screen showing, at the far end of the band. */
 .actions {
@@ -1177,7 +1187,7 @@ tr.pending .lead .discard { opacity: 1; }
    being read, and the same panel works on a narrow screen without a second layout. Wide enough
    for a subtable to be a table rather than a list of squeezed columns — the record's own fields
    never needed the room, its details do. */
-#peek {
+:is(#peek, #watch) {
 	position: fixed;
 	inset: 0 0 0 auto;
 	z-index: 4;
@@ -1188,9 +1198,9 @@ tr.pending .lead .discard { opacity: 1; }
 	background: var(--surface);
 	box-shadow: -1px 0 24px rgb(0 0 0 / .1);
 }
-#peek[hidden] { display: none; }		/* `display: flex` would otherwise outvote the attribute */
+:is(#peek, #watch)[hidden] { display: none; }	/* `display: flex` would otherwise outvote the attribute */
 
-#peek > header {
+:is(#peek, #watch) > header {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
@@ -1200,16 +1210,16 @@ tr.pending .lead .discard { opacity: 1; }
 	padding: .5rem .75rem .5rem 1rem;
 	border-bottom: 1px solid var(--line);
 }
-#peek > header > div { min-width: 0; }		/* long values elide instead of pushing the close button out */
+:is(#peek, #watch) > header > div { min-width: 0; }		/* long values elide instead of pushing the close button out */
 
-#peek-entity {
+:is(#peek-entity, #watch-kind) {
 	display: block;
 	color: var(--faint);
 	font-size: .6875rem;
 	text-transform: uppercase;
 	letter-spacing: .08em;
 }
-#peek-title {
+:is(#peek-title, #watch-title) {
 	margin: 0;
 	font-size: .9375rem;
 	font-weight: 600;
@@ -1219,7 +1229,7 @@ tr.pending .lead .discard { opacity: 1; }
 	text-overflow: ellipsis;
 }
 
-#peek-close {
+:is(#peek-close, #watch-close) {
 	flex: none;
 	width: 1.75rem;
 	height: 1.75rem;
@@ -1230,7 +1240,7 @@ tr.pending .lead .discard { opacity: 1; }
 	color: var(--muted);
 	cursor: pointer;
 }
-#peek-close::before {
+:is(#peek-close, #watch-close)::before {
 	content: "";
 	display: block;
 	height: 100%;
@@ -1238,7 +1248,7 @@ tr.pending .lead .discard { opacity: 1; }
 	-webkit-mask: var(--icon-close) center / .875rem no-repeat;
 	mask: var(--icon-close) center / .875rem no-repeat;
 }
-#peek-close:hover { background: var(--hover); color: var(--ink); }
+:is(#peek-close, #watch-close):hover { background: var(--hover); color: var(--ink); }
 
 /* The form fills the panel below its header, so the field list scrolls on its own and the
    actions stay pinned to the bottom — the same reason the header stays pinned to the top. */
@@ -1382,7 +1392,7 @@ tr.pending .lead .discard { opacity: 1; }
 
 /* The section says what it is, in the voice the panel's header already uses for the entity
    name: this is a region of the record on screen, not a second screen. */
-#peek-details-title {
+:is(#peek-details-title, .watch-heading) {
 	margin: 0;
 	flex: none;
 	padding: .625rem .75rem .25rem;
@@ -1825,3 +1835,89 @@ th.borrowed small { color: var(--muted); }
 
 	#entities { flex-direction: row; gap: .25rem; overflow-x: auto; scrollbar-width: none; }
 }
+
+
+/* --- Monitor (SCOPE 8a, 8b) --- */
+
+/* The list is the grid's own table; a user's panel is the record panel's frame (shared above),
+   wider, since what it holds is a log rather than a form. */
+#monitor[hidden] { display: none; }
+#watch { width: min(48rem, 100%); }
+
+/* The panel's body is laid out as the record panel's: what is short sits on top at its own
+   height, and the region with a table under it takes the rest and scrolls inside itself. */
+#watch-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
+/* The tables the user has open: chips, in the panel's own ground, like a record's fields. */
+.watch-part { flex: none; padding-bottom: .75rem; }
+.watch-part > :not(.watch-heading) { margin-inline: .75rem; }
+.watch-none { margin-block: .25rem 0; color: var(--muted); font-size: .8125rem; }
+.watch-none[hidden], .monitor-tab-list[hidden] { display: none; }
+
+/* What they did: drawn as "Detalles" is — a raised region under a rule, its heading, a strip
+   across it (the filter bar, where a subtable has its tabs), and the grid's own `.sheet`, whose
+   header stays put while the rows scroll. Nothing about the table is restated here. */
+.watch-log {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+	border-top: 1px solid var(--line);
+	background: var(--raised);
+}
+.watch-strip { flex: none; border-bottom: 1px solid var(--line); }
+.watch-log .sheet { background: var(--surface); }
+.watch-empty { margin: 0; padding: .75rem 1rem; color: var(--muted); font-size: .8125rem; }
+.watch-empty[hidden] { display: none; }
+
+/* An action's leading control unfolds the SQL under it: the chevron points at the line while it
+   is folded and down into the code once it is open. The line answers a click anywhere on it. */
+.monitor-action { cursor: pointer; }
+.lead .fold { --mark: var(--icon-chevron); }
+.lead .fold::before { transform: rotate(-90deg); transition: transform .15s; }
+.lead .fold[aria-expanded="true"]::before { transform: none; }
+@media (prefers-reduced-motion: reduce) { .lead .fold::before { transition: none; } }
+.monitor-action.open td { border-bottom-color: transparent; }	/* the line and its SQL read as one */
+
+/* A long request is cut short in its cell, and said whole on hover. */
+.monitor-request {
+	display: block;
+	max-width: 22rem;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* What unfolds: a code block a shade darker than the line it came from. It takes the width the
+   table already has rather than lending it its own — `width: 0` keeps the longest statement from
+   widening the table, and `min-width: 100%` fills the cell it was given — so it wraps. */
+.monitor-code { height: auto; padding: 0 .75rem .75rem; white-space: normal; vertical-align: top; }
+.monitor-sql {
+	width: 0;
+	min-width: 100%;
+	margin: 0;
+	padding: .625rem .75rem;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--raised);
+	color: var(--ink);
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: .6875rem;
+	line-height: 1.6;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+/* One chip per open tab: the screen it is on and the records it has open there. */
+.monitor-tab-list { display: flex; flex-wrap: wrap; gap: .375rem; margin-block: .25rem 0; padding: 0; list-style: none; }
+.monitor-tab {
+	display: inline-flex;
+	align-items: center;
+	gap: .375rem;
+	padding: .1875rem .5rem;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: var(--surface);
+	font-size: .75rem;
+}
+.monitor-screen { font-weight: 500; }
+.monitor-record { color: var(--muted); font-variant-numeric: tabular-nums; }

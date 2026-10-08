@@ -154,3 +154,6 @@ const entityDefs = defineEntities({
 });
 
 export const tables = tablesFrom(entityDefs, restaurante.handlers);
+
+/** Which roles are allowed to monitor. */
+export const monitor = ['admin'];

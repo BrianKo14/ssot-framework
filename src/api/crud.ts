@@ -74,7 +74,9 @@ export interface Seeing {
 
 /** Generic CRUD router factory.
  * @param master when this table is mounted as a detail, the reference it was mounted through. */
-export function crudRouter(db: Db, t: TableInfo, presence: Seeing, changes: Changes, master?: ReferenceInfo): Router {
+export function crudRouter(
+	db: Db, t: TableInfo, presence: Seeing, changes: Changes, noticed: RequestHandler, master?: ReferenceInfo,
+): Router {
 	const r = Router({ mergeParams: true });	// `mergeParams` lets the detail's router see the master's path parameters
 
 	r.use(permit(t));				// first thing: authorization gate
@@ -168,38 +170,6 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, changes: Chan
 
 	// --- ENDPOINTS ---
 
-	/** SELECT cols FROM table [LEFT JOIN reached...] [WHERE ...] ORDER BY pk_col1, pk_col2, ... */
-	const listRows = async (req: Request) => {
-		const raw = withInherited(req, parseFilter(req.query.filter)); 			// under a master, its key comes from the path
-		const asked = parseReached(req.query.with);
-		const read = reading(t, [...asked, ...Object.keys(raw)], readableBy(req));
-		const columns = read.shown(asked);
-		const kin = family(db, send, t, req.query.children, readableBy(req));		// before the query: a bad tree costs no round trip
-
-		const params: unknown[] = [];
-		const filtered = where(filterConditions(read.byName, raw, params, read.at));
-
-		const rows = await sent(columns, await db.query(
-			`${read.statement([...columns, STAMP], filtered)} order by ${read.order}`, params));	// sort by primary key
-
-		await kin.attach(rows, read, filtered, params);
-
-		return { columns, rows };
-	};
-
-	// GET /[?filter={"col":value,"col2":{"op":"ge","value":…},...}][&with=["fk.col",…]][&children=["entity",{"entity":…,"fk":…},…]][&format=xlsx|txt]
-	r.get('/', wrap(async (req, res) => {
-		const format = formatNamed(req.query.format);					// before the query: a bad format costs no round trip
-		const { columns, rows } = await listRows(req);
-
-		await sendAs(res, format, {
-			name: t.entity,
-			columns,								// the table's own, plus whatever it reached: exporting is reading
-			pk: t.pk.map(c => c.name),
-			rows,
-		});
-	}));
-
 	/** A list of all the records that are currently locked. */
 	const claims = async (): Promise<Lock[]> => {
 		const rows = await db.query(
@@ -252,6 +222,44 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, changes: Chan
 
 	// GET /:pk0[/:pk1...]/_viewers[?tab=…]
 	r.get(`${byPk}/${VIEWERS}`, watching(true));
+
+
+
+	// --> MOUNTS MONITOR MIDDLEWARE
+	// Everything under this point count as user activity and is logged.
+	r.use(noticed);
+
+	/** SELECT cols FROM table [LEFT JOIN reached...] [WHERE ...] ORDER BY pk_col1, pk_col2, ... */
+	const listRows = async (req: Request) => {
+		const raw = withInherited(req, parseFilter(req.query.filter)); 			// under a master, its key comes from the path
+		const asked = parseReached(req.query.with);
+		const read = reading(t, [...asked, ...Object.keys(raw)], readableBy(req));
+		const columns = read.shown(asked);
+		const kin = family(db, send, t, req.query.children, readableBy(req));		// before the query: a bad tree costs no round trip
+
+		const params: unknown[] = [];
+		const filtered = where(filterConditions(read.byName, raw, params, read.at));
+
+		const rows = await sent(columns, await db.query(
+			`${read.statement([...columns, STAMP], filtered)} order by ${read.order}`, params));	// sort by primary key
+
+		await kin.attach(rows, read, filtered, params);
+
+		return { columns, rows };
+	};
+
+	// GET /[?filter={"col":value,"col2":{"op":"ge","value":…},...}][&with=["fk.col",…]][&children=["entity",{"entity":…,"fk":…},…]][&format=xlsx|txt]
+	r.get('/', wrap(async (req, res) => {
+		const format = formatNamed(req.query.format);					// before the query: a bad format costs no round trip
+		const { columns, rows } = await listRows(req);
+
+		await sendAs(res, format, {
+			name: t.entity,
+			columns,								// the table's own, plus whatever it reached: exporting is reading
+			pk: t.pk.map(c => c.name),
+			rows,
+		});
+	}));
 
 	/** The column a history is about (when it's about one column and not a whole record). */
 	const askedField = (raw: unknown): string | null => {
@@ -468,7 +476,8 @@ export function crudRouter(db: Db, t: TableInfo, presence: Seeing, changes: Chan
 
 
 /** Gather all the CRUD routers for the given tables. Mounted whole at `/api`. */
-export function entityRouter(db: Db, tables: TableInfo[], presence: Presence): Router {
+/** @param noticed what notes a request down as its user's activity, see `auth/activity.ts` */
+export function entityRouter(db: Db, tables: TableInfo[], presence: Presence, noticed: RequestHandler): Router {
 	const r = Router();
 
 	const seeing: Seeing = {
@@ -479,11 +488,11 @@ export function entityRouter(db: Db, tables: TableInfo[], presence: Presence): R
 	const changes = changeStore(db);
 
 	for (const t of tables) {					// per table CRUD router at /api/<table>
-		r.use(`/${t.entity}`, crudRouter(db, t, seeing, changes));
+		r.use(`/${t.entity}`, crudRouter(db, t, seeing, changes, noticed));
 
 		// ...and mount each of its details' collections under it, at /api/<master>/<master key>/<detail>.
 		for (const ref of t.details.filter(isNestable))
-			r.use(`/${t.entity}${detailPath(ref)}`, crudRouter(db, ref.from, seeing, changes, ref));
+			r.use(`/${t.entity}${detailPath(ref)}`, crudRouter(db, ref.from, seeing, changes, noticed, ref));
 	}
 
 	return r;

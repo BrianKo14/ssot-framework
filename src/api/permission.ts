@@ -18,8 +18,11 @@ const CAPABILITY: ReadonlyMap<string, Capability> = new Map<string, Capability>(
 	['UNLOCK', 'lock'],
 ]);
 
+/** Stores access information, for tables or the monitor. */
+export type Guarded = Pick<TableInfo, 'entity' | 'access'>;
+
 /** May this request do `can` to this table? */
-const may = (req: Request, t: TableInfo, can: Capability) => {
+const may = (req: Request, t: Guarded, can: Capability) => {
 	const role = req.principal?.role;
 
 	return role !== undefined && allows(t.access, role, can);
@@ -32,10 +35,8 @@ export const readableBy = (req: Request) => (t: TableInfo) => may(req, t, 'read'
 export const deletableBy = (req: Request) => (t: TableInfo) => may(req, t, 'delete');
 
 /** The authorization gate.
- * Is mounted inside `crudRouter` so every mount of it is guarded.
- * 
- * If disallowed, throws a 402 error. */
-export const permit = (t: TableInfo): RequestHandler => (req, _res, next) => {
+ * Is mounted inside `crudRouter` so every mount of it is guarded. */
+export const permit = (t: Guarded): RequestHandler => (req, _res, next) => {
 	const can = CAPABILITY.get(req.method);
 
 	if (can === undefined || !may(req, t, can))

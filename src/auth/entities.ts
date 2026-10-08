@@ -66,6 +66,15 @@ const authRecords = withRecords(authTypes, {
 		at: { type: 'datetime', nullable: false, defaultValue: { fn: 'now' } },
 		by: { type: 'username', nullable: false },
 	}),
+
+	/** Activity monitor. One row per request. */
+	activity: defineRecord(authTypes, {
+		user: { type: 'username' },
+		at: { type: 'datetime', nullable: false, defaultValue: { fn: 'now' } },
+		screen: { type: 'text' },			// the entity the page was showing
+		request: { type: 'text', nullable: false },	// method + URL
+		statements: { type: 'text', nullable: false },	// the SQL it ran, separated by semicolons
+	}),
 });
 
 const entityDefs = defineEntities({ ...inSchema(AUTH_SCHEMA, {
@@ -82,6 +91,9 @@ const entityDefs = defineEntities({ ...inSchema(AUTH_SCHEMA, {
 
 	change: defineEntity(authRecords, { name: 'change', record: 'change', pk: ['entity', 'record', 'field', 'version'],
 		fks: { by: { entity: `${AUTH_SCHEMA}.user`, fields: { by: 'username' } } } }),
+
+	activity: defineEntity(authRecords, { name: 'activity', record: 'activity', pk: ['user', 'at'],
+		fks: { user: { entity: `${AUTH_SCHEMA}.user`, fields: { user: 'username' } } } }),
 }) });
 
 /** Framework's tables.
@@ -105,6 +117,7 @@ export const credentialTable = find(`${AUTH_SCHEMA}.credential`);
 export const sessionTable = find(`${AUTH_SCHEMA}.session`);
 export const presenceTable = find(`${AUTH_SCHEMA}.presence`);
 export const changeTable = find(`${AUTH_SCHEMA}.change`);
+export const activityTable = find(`${AUTH_SCHEMA}.activity`);
 
 /** A column in an auth table. */
 export const col = (t: TableInfo, name: string): ColumnInfo => {

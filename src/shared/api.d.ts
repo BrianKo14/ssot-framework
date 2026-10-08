@@ -63,6 +63,8 @@ export interface SystemMeta {
 	undo: string;
 	/** Polling interval + presence tracking, in seconds. */
 	pollSeconds: number;
+	/** The monitor, when *this* caller may see it (SCOPE 8a/8b); null when not. */
+	monitor: MonitorMeta | null;
 }
 
 /** Another tab, on this screen or on any other the caller is allowed to know about. */
@@ -86,6 +88,35 @@ export interface Watching {
 	tab: string;
 	viewers: Viewer[];
 	locks: Lock[];
+}
+
+/** The monitor's two lists, each described as a table is, so the filter bar takes it as one. */
+export interface MonitorMeta {
+	users: TableMeta;	// the signed-in users: who they are, and their newest action
+	actions: TableMeta;	// one user's actions
+}
+
+/** A row of the activity log. */
+export interface Activity {
+	at: string;			// when, by the database's clock
+	screen: string | null;		// the entity the page was showing
+	request: string;		// method + URL
+	statements: string;		// the SQL it ran, semicolon-separated
+}
+
+/** A signed-in user, as the monitor lists them. */
+export interface Online {
+	user: string;
+	role: string;
+	last: Activity | null;
+}
+
+/** What the monitor is answered each round. */
+export interface Monitored {
+	online: Online[];
+	/** Every open tab the watcher may be told about, whoever's and whatever the list's filter:
+	 * a user's are their *Tablas abiertas*, and all of them are what the rail draws. */
+	tabs: Viewer[];
 }
 
 /** A change to a record. */

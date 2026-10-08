@@ -1,0 +1,53 @@
+// The `/api/_monitor` endpoints
+
+import { type Request, Router } from 'express';
+import type { Activities, Unseen } from '../auth/activity.js';
+import type { Presence } from '../auth/presence.js';
+import { accessOf } from '../schema/access.js';
+import type { Access, TableInfo } from '../schema/model.js';
+import type { Activity, Monitored } from '../shared/api.js';
+import { wrap } from './handler.js';
+import { parseFilter } from '../sql/filter.js';
+import { tableRef } from '../sql/identifier.js';
+import { type Guarded, permit, readableBy } from './permission.js';
+
+/** Name of the monitor endpoint, and of its screen. */
+export const MONITOR = '_monitor';
+
+/** The access control for the monitor endpoint. */
+export const monitorAccess = (roles: readonly string[]): Access =>
+	accessOf(MONITOR, Object.fromEntries(roles.map(role => [role, ['read'] as const])));
+
+/** Mounted beside the entities. Nothing here is noted down as activity.
+ * 
+ * @param activities the activity store to read from
+ * @param presence the presence store to read from
+ * @param guarded the grant the application stated for the monitor, as `serve` was handed it
+ * @param tables the application's tables, which an action or a tab may be about */
+export function monitorRouter(activities: Activities, presence: Presence, guarded: Guarded, tables: TableInfo[]): Router {
+	const unseen = (req: Request): Unseen => {
+		const hidden = tables.filter(t => !readableBy(req)(t));
+
+		return { screens: hidden.map(t => t.entity), tables: hidden.map(tableRef) };
+	};
+
+	const readable = (req: Request) => tables.filter(readableBy(req)).map(t => t.entity);
+
+	return Router()
+		.use(permit(guarded))
+
+		// GET /[?filter=…][&tab=…] — who is signed in with their newest action + every open tab.
+		.get('/', wrap(async (req, res) => {
+			const [online, tabs] = await Promise.all([
+				activities.online(unseen(req), parseFilter(req.query.filter)),
+				presence.tabs(readable(req), req.query.tab),
+			]);
+
+			res.json({ online, tabs } satisfies Monitored);
+		}))
+
+		// GET /:user[?filter=…] — everything they did, newest first
+		.get('/:user', wrap(async (req, res) => {
+			res.json(await activities.of(req.params.user, unseen(req), parseFilter(req.query.filter)) satisfies Activity[]);
+		}));
+}

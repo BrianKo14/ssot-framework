@@ -1,4 +1,4 @@
-import { boolean, integer, interval } from './types/builtin.js';
+import { boolean, integer, interval, text } from './types/builtin.js';
 import type { TypeHandler } from './types/handler.js';
 
 export interface AppConfig {
@@ -11,6 +11,8 @@ export interface AppConfig {
   cookieSecure: boolean;
   /** Seconds between polling to a screen + presence window. */
   pollSeconds: number;
+  /** File every statement that took effect is appended to. */
+  sqlDump: string | undefined;
 }
 
 function required(name: string): string {
@@ -19,8 +21,9 @@ function required(name: string): string {
   return v;
 }
 
-/** An optional variable. Read through a type handler to catch type errors. */
-function optional<T>(name: string, fallback: T, type: TypeHandler<T>): T {
+/** An optional variable. Read through a type handler to catch type errors.
+ * @param fallback may be of another type, e.g. `undefined` for "not set" */
+function optional<T, F = T>(name: string, fallback: F, type: TypeHandler<T>): T | F {
   const raw = process.env[name];
 
   if (raw === undefined || raw === '') return fallback;
@@ -39,5 +42,6 @@ export function loadConfig(): AppConfig {
     sessionTtl: optional('SESSION_TTL', 'PT8H', interval),
     cookieSecure: optional('COOKIE_SECURE', false, boolean),
     pollSeconds: optional('PRESENCE_POLL', 1, integer(1, 300)),
+    sqlDump: optional('SQL_DUMP', undefined, text()),
   };
 }

@@ -5,10 +5,11 @@ import type { ColumnMeta, MonitorMeta, ReferenceMeta, SystemMeta, TableMeta } fr
 import { formatMeta } from '../format/registry.js';
 import { DEFAULT_OP, operatorMeta } from '../sql/filter.js';
 import { allows, CAPABILITIES } from '../schema/access.js';
-import { ACTION_FILTERS, USER_FILTERS } from '../auth/activity.js';
+import { ACTION_FILTERS, DUMP_FILTERS, USER_FILTERS } from '../auth/activity.js';
 import { activityTable } from '../auth/entities.js';
 import { UNDO } from '../auth/changes.js';
 import type { ColumnInfo, ReferenceInfo, TableInfo } from '../schema/model.js';
+import { DUMP } from './monitor.js';
 import type { Guarded } from './permission.js';
 import { STAMP } from '../schema/reserved.js';
 
@@ -39,13 +40,17 @@ const tableMeta = (t: TableInfo): Omit<TableMeta, 'capabilities' | 'references'>
 const listMeta = (entity: string, columns: ColumnInfo[]): TableMeta =>
 	({ entity, pk: [], columns: columns.map(columnMeta), references: [], capabilities: ['read'] });
 
-/** What the monitor's two filter bars can filter (SCOPE 8a): its users, and one user's actions. */
-const monitorMeta = (monitor: Guarded): MonitorMeta =>
-	({ users: listMeta(monitor.entity, USER_FILTERS), actions: listMeta(activityTable.entity, ACTION_FILTERS) });
+/** What the monitor's filter bars can filter. */
+const monitorMeta = (monitor: Guarded, dumping: boolean): MonitorMeta => ({
+	users: listMeta(monitor.entity, USER_FILTERS),
+	actions: listMeta(activityTable.entity, ACTION_FILTERS),
+	dump: dumping ? listMeta(DUMP, DUMP_FILTERS) : null,
+});
 
-export function metaRouter(tables: TableInfo[], pollSeconds: number, monitor: Guarded): Router {
+/** @param dumping whether the server writes the SQL dump, so there is one to show */
+export function metaRouter(tables: TableInfo[], pollSeconds: number, monitor: Guarded, dumping: boolean): Router {
 
-	const watching = monitorMeta(monitor);
+	const watching = monitorMeta(monitor, dumping);
 
 	/** A list of all tables, with their metadata and references */
 	const described = tables.map(t =>

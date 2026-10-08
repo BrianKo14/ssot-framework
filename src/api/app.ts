@@ -1,6 +1,6 @@
 import path from 'node:path';
 import express from 'express';
-import { activityStore, noticing, traced } from '../auth/activity.js';
+import { activityStore, type DumpLog, noticing, traced } from '../auth/activity.js';
 import { AUTH_SCHEMA, authTables } from '../auth/entities.js';
 import { presenceStore } from '../auth/presence.js';
 import type { Authenticator } from '../auth/store.js';
@@ -10,7 +10,7 @@ import { AUTH, gate, login, sessionRouter } from './auth.js';
 import { entityRouter } from './crud.js';
 import { onError } from './handler.js';
 import { META, metaRouter } from './meta.js';
-import { MONITOR, monitorRouter } from './monitor.js';
+import { DUMP, dumpRouter, MONITOR, monitorRouter } from './monitor.js';
 import type { Access } from '../schema/model.js';
 import type { TableInfo } from '../schema/model.js';
 
@@ -21,7 +21,7 @@ const PUBLIC_DIR = path.join(import.meta.dirname, '..', '..', 'public');
 const SCREEN = /^(?!\/api(\/|$))/;
 
 /** Reserved entity names. */
-const RESERVED = new Set([META, AUTH, MONITOR, ...authTables.map(t => t.entity)]);
+const RESERVED = new Set([META, AUTH, MONITOR, DUMP, ...authTables.map(t => t.entity)]);
 
 /** A schema with taken name should fail at startup. */
 const refuseReserved = (tables: TableInfo[]): void => {
@@ -41,8 +41,9 @@ const refuseReserved = (tables: TableInfo[]): void => {
 
 /** Takes a database connection + a list of tables + the authenticator guarding them.
  * @param monitor who may see the monitor, as the application stated it
+ * @param dump the SQL dump, when the server writes one; shown to whoever may see the monitor
  * @returns An Express app with a CRUD router for each table, and error handling middleware. */
-export function buildApp(db: Db, tables: TableInfo[], auth: Authenticator, config: AppConfig, monitor: Access) {
+export function buildApp(db: Db, tables: TableInfo[], auth: Authenticator, config: AppConfig, monitor: Access, dump?: DumpLog) {
 	refuseReserved(tables);
 
 	const presence = presenceStore(db, config.pollSeconds);
@@ -65,10 +66,11 @@ export function buildApp(db: Db, tables: TableInfo[], auth: Authenticator, confi
 	app.use(`/api/${AUTH}`, sessionRouter(auth, config));
 
 	// --> 5. Schema metadata
-	app.use(`/api/${META}`, metaRouter(tables, config.pollSeconds, guarded));
+	app.use(`/api/${META}`, metaRouter(tables, config.pollSeconds, guarded, dump !== undefined));
 
-	// --> 6. Activity
+	// --> 6. Activity, and the SQL dump when there is one
 	app.use(`/api/${MONITOR}`, monitorRouter(activities, presence, guarded, tables));
+	if (dump) app.use(`/api/${DUMP}`, dumpRouter(dump, guarded, tables));
 
 	// --> 7. One CRUD router per table + each detail under its master
 	const screens = new Set(tables.map(t => t.entity));

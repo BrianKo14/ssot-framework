@@ -38,3 +38,6 @@ DECISIONS.md
 
 # Own scripts
 start-example.sh
+
+# Dump
+dump.sql

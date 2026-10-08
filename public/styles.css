@@ -49,6 +49,8 @@
 	/* The undo (SCOPE 6g): a shaft that turns back on itself, with the head on the end it came
 	   from. It reads as one motion reversed, which is what the button does — and it leans left,
 	   away from the padlock's upright body, so the two do not read as a pair at this size. */
+	--icon-code: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 4.5 2 8l3.5 3.5"/><path d="M10.5 4.5 14 8l-3.5 3.5"/></svg>');
+	--icon-refresh: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8a5 5 0 1 1-1.46-3.54"/><path d="M13 2.5v2.5h-2.5"/></svg>');
 	--icon-undo: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.4 3.4 3.4 6.4l3 3"/><path d="M3.4 6.4h5.8a3.2 3.2 0 0 1 0 6.4H6.4"/></svg>');
 	/* The monitor (SCOPE 8a): a pulse, since what it shows is what is happening now. */
 	--icon-pulse: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1.8 8.4h2.8l1.7-4.2 3.2 8 1.7-3.8h3"/></svg>');
@@ -217,6 +219,10 @@ aside h2 {
 #tools a::before {
 	-webkit-mask-image: var(--icon-pulse);
 	mask-image: var(--icon-pulse);
+}
+#tools a[data-entity="_dump"]::before {		/* the SQL dump (SCOPE 7d): code, not a pulse */
+	-webkit-mask-image: var(--icon-code);
+	mask-image: var(--icon-code);
 }
 
 
@@ -571,12 +577,12 @@ main > header {
    and the header is where a screen is read — the accent stays on the band below, with writing.
    The panel's tab strip borrows the same shape for the same reason — it sits in furniture, not
    on the band — so the shape is written once and only the mark differs. */
-:is(.exports, .tab-insert) {
+:is(.exports, .tab-insert, .refresh) {
 	align-items: center;
 	padding: 0;
 }
 
-:is(.exports, .tab-insert) button {
+:is(.exports, .tab-insert, .refresh) button {
 	justify-content: center;
 	width: 1.75rem;
 	height: 1.75rem;
@@ -587,6 +593,12 @@ main > header {
 	background: var(--surface);
 	color: var(--muted);
 }
+.refresh button::before {
+	width: .875rem;
+	height: .875rem;
+	-webkit-mask: var(--icon-refresh) center / contain no-repeat;
+	mask: var(--icon-refresh) center / contain no-repeat;
+}
 .exports button::before {
 	width: .875rem;
 	height: .875rem;
@@ -594,8 +606,8 @@ main > header {
 	mask: var(--icon-export) center / contain no-repeat;
 }
 /* Its own hover, not the fill's brightness step: there is no fill here to brighten. */
-:is(.exports, .tab-insert) button:hover,
-:is(.exports, .tab-insert) button[aria-expanded="true"] {
+:is(.exports, .tab-insert, .refresh) button:hover,
+:is(.exports, .tab-insert, .refresh) button[aria-expanded="true"] {
 	filter: none;
 	border-color: var(--faint);
 	background: var(--hover);
@@ -1921,3 +1933,25 @@ th.borrowed small { color: var(--muted); }
 }
 .monitor-screen { font-weight: 500; }
 .monitor-record { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+
+/* --- SQL dump (SCOPE 7d) --- */
+
+/* Drawn as the monitor's actions are: one line each, unfolding into the whole statement. Here the
+   statement has the screen to itself, so the table is as wide as the screen and no wider: the time
+   gets the width it needs and the statement the rest, wherever the window ends. */
+#dump[hidden] { display: none; }
+#dump table { width: 100%; table-layout: fixed; }
+#dump thead th:nth-child(2) { width: 11rem; }
+
+/* The cut is a fade over its last characters rather than a "…": monospace SQL is cut mid-token
+   wherever the width falls, and a glyph wedged against it reads as part of the code. A statement
+   short enough to fit never reaches the faded end, so only one that goes on is faded. */
+.dump-statement {
+	max-width: none;
+	text-overflow: clip;
+	-webkit-mask-image: linear-gradient(to right, #000 calc(100% - 3rem), transparent);
+	mask-image: linear-gradient(to right, #000 calc(100% - 3rem), transparent);
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: .75rem;
+}

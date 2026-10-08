@@ -8,6 +8,7 @@ import { api, ApiError, sending } from './api.js';
 import { authenticated, sessionEnded, type Session } from './auth.js';
 import type { Grid } from './clipboard.js';
 import { byId, classed, el, lead } from './dom.js';
+import { DUMP, type DumpScreen, dumpScreen } from './dump.js';
 import { download } from './export.js';
 import { filterBar, type FilterBar } from './filters.js';
 import {
@@ -1993,12 +1994,13 @@ const link = (t: TableMeta) => {
 /** The monitor's address; the user picked on it, if any, is its key: `/_monitor/cocina`. */
 const monitorAt = (picked: string[]) => route.href({ screen: MONITOR, key: picked, conditions: [] });
 
-/** The rail's line for the monitor, beside the tables' but under a heading of its own. */
-const monitorLink = () => {
-	const a = el('a', classed('span', 'name', 'Monitor'));
+/** The rail's line for one of the framework's own screens, beside the tables' but under a heading
+    of its own. */
+const toolLink = (name: string, label: string) => {
+	const a = el('a', classed('span', 'name', label));
 
-	a.href = monitorAt([]);
-	a.dataset.entity = MONITOR;
+	a.href = route.href({ screen: name, key: [], conditions: [] });
+	a.dataset.entity = name;
 
 	return a;
 };
@@ -2033,6 +2035,8 @@ let ancestry!: AncestryPicker;
 let route!: Router;
 /** Built in `main` only when the role may read the monitor; without it there is no such screen. */
 let observer: Monitor | undefined;
+/** Built in `main` only when the monitor may be read and the server writes a dump (SCOPE 7d). */
+let reader: DumpScreen | undefined;
 
 /** The address for what is on screen now, assembled from the screen and the bar themselves. */
 const here = (record: string[] = []): View =>
@@ -2098,33 +2102,48 @@ const hideTableChrome = () => {
 	for (const part of [filters.element, inserts.element, exports.element]) part.hidden = true;
 };
 
-/** The monitor instead of a table's grid (SCOPE 8a, 8b). Nobody is *on* it, as presence counts:
-    it is no table's screen.
-    @param picked the user whose actions it shows, as the address names them */
-const monitoring = (seen: Monitor, picked: string | null) => {
+/** One of the framework's own screens instead of a table's grid. Nobody is *on* it, as presence
+    counts: it is no table's screen. */
+const ownScreen = (name: string, title: string) => {
 	status.standing(route, []);
 	status.standing(grid, []);
-	current(MONITOR);
+	current(name);
 	blank();
 	hideTableChrome();
-	heading.replaceChildren('Monitor');
+	heading.replaceChildren(title);
 	screen = null;
 	sheet = null;
 	watch.at(null, [], []);
 	busy('Cargando…');
+};
+
+/** The monitor (SCOPE 8a, 8b).
+    @param picked the user whose actions it shows, as the address names them */
+const monitoring = (seen: Monitor, picked: string | null) => {
+	reader?.stop();
+	ownScreen(MONITOR, 'Monitor');
 	seen.show(picked);
+};
+
+/** The statements that took effect (SCOPE 7d). */
+const dumping = (shown: DumpScreen) => {
+	observer?.stop();
+	ownScreen(DUMP, 'SQL dump');
+	shown.show();
 };
 
 async function draw(): Promise<void> {
 	const { view, unresolved } = route.read();
 
 	if (view.screen === MONITOR && observer) { monitoring(observer, view.key[0] ?? null); return; }
+	if (view.screen === DUMP && reader) { dumping(reader); return; }
 
 	const t = tables.find(x => x.entity === view.screen);
 
 	if (!t) { route.go({ screen: tables[0].entity, key: [], conditions: [] }, true); return; }
 
 	observer?.stop();
+	reader?.stop();
 
 	// what was wrong with the last address, and with the last try at drawing one, is not now
 	status.standing(route, []);
@@ -2217,13 +2236,18 @@ async function main(): Promise<void> {
 			tab: () => watch.tab(),
 			seen: viewers => showViewers(viewers, []),
 		});
-		tools.replaceChildren(monitorLink());
+		tools.replaceChildren(toolLink(MONITOR, 'Monitor'));
 		toolsTitle.hidden = false;
+
+		if (meta.monitor.dump) {
+			reader = dumpScreen({ meta: meta.monitor.dump, operators: meta.operators, status });
+			tools.append(toolLink(DUMP, 'SQL dump'));
+		}
 	}
 
-	toolbar.append(filters.element, inserts.element, ...(observer ? [observer.bar] : []));
+	toolbar.append(filters.element, inserts.element, ...[observer, reader].flatMap(own => own ? [own.bar] : []));
 	headerEnd.prepend(watchers);		// ahead of the counts: who is here, then what is here
-	headerEnd.append(exports.element);
+	headerEnd.append(exports.element, ...(reader ? [reader.refresh] : []));
 	peekTabbar.append(details.element);	// outside the tabs' scroll box, so its list can escape it
 	peekClose.addEventListener('click', dismissPeek);
 	peekChangesTitle.addEventListener('click',

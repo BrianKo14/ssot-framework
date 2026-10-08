@@ -46,11 +46,28 @@ DATABASE_URL=postgres://app:app@localhost:5433/appdb
 PORT=3000
 ```
 
-`DATABASE_URL` is required. `PORT` defaults to `3000` if omitted. Three more
+`DATABASE_URL` is required. `PORT` defaults to `3000` if omitted. Four more
 are optional: `SESSION_TTL` (login session lifetime, ISO-8601 duration,
-default `PT8H`), `COOKIE_SECURE` (`true`/`false`, default `false`) and
+default `PT8H`), `COOKIE_SECURE` (`true`/`false`, default `false`),
 `PRESENCE_POLL` (seconds between a screen's "who else is here" polls, default
-`1`).
+`1`) and `SQL_DUMP` (see below).
+
+### Dump the SQL the server runs
+
+As an environment variable, `SQL_DUMP` points to a file where the server dumps:
+
+```bash
+SQL_DUMP=./dump.sql npm run start
+```
+
+Example line:
+
+```sql
+--- 2024-06-14T20:00:00.000Z
+INSERT INTO "users" ("id", "name", "role") VALUES (1, 'brian', 'admin');
+```
+
+Whoever may see the *Monitor* also gets a *SQL dump* screen under "Sistema".
 
 ### Start the database
 

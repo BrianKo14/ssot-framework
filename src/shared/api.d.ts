@@ -94,6 +94,8 @@ export interface Watching {
 export interface MonitorMeta {
 	users: TableMeta;	// the signed-in users: who they are, and their newest action
 	actions: TableMeta;	// one user's actions
+	/** The SQL dump (SCOPE 7d), when the server writes one; null when it does not. */
+	dump: TableMeta | null;
 }
 
 /** A row of the activity log. */
@@ -102,6 +104,19 @@ export interface Activity {
 	screen: string | null;		// the entity the page was showing
 	request: string;		// method + URL
 	statements: string;		// the SQL it ran, semicolon-separated
+}
+
+/** A statement that took effect, as the SQL dump writes it. */
+export interface Dumped {
+	at: string;			// when its answer arrived, by the server's clock
+	statements: string;		// one statement, its values written in
+}
+
+/** The SQL dump, as one viewer sees it. */
+export interface DumpRead {
+	/** How many statements the filter matched. */
+	total: number;
+	entries: Dumped[];
 }
 
 /** A signed-in user, as the monitor lists them. */

@@ -46,7 +46,7 @@ const USER_HEADINGS = ['Usuario', 'Rol', 'Última actividad', 'Pantalla'];
 const ACTION_HEADINGS = ['Cuándo', 'Pantalla', 'Request'];
 
 /** "2026-09-30 15:37:08", without the fraction the database adds. */
-const when = (at: string) => at.slice(0, 19);
+export const when = (at: string) => at.slice(0, 19);
 
 /** The request as it would be typed: a filter reads as the JSON it is, not as `%7B%22…`. */
 const readable = (request: string) => {
@@ -57,11 +57,45 @@ const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : 
 
 /** A table with its headings, and the body its rows go into.
  * @param leading whether it has the grid's leading column, for the control that opens a line */
-const table = (headings: string[], leading: boolean) => {
+export const table = (headings: string[], leading: boolean) => {
 	const body = el('tbody');
 	const head = el('tr', ...(leading ? [lead('th')] : []), ...headings.map(h => el('th', h)));
 
 	return { table: el('table', el('thead', head), body), body };
+};
+
+/** A line, and under it the SQL it is about, folded until asked for. The leading column holds the
+ * control that unfolds it, as every grid's holds the one that opens a record; the whole line answers
+ * a click too, since it has nothing else to do with one. The control is a button, so the keyboard
+ * gets there and Enter on it is a click that reaches the line like any other.
+ * @param unfolded the keys of the lines open now, kept up to date, so reading the list again does
+ * not fold them back
+ * @param cells the line's own, after the leading column */
+export const foldingLine = (unfolded: Set<string>, key: string, cells: HTMLElement[], sql: string): HTMLTableRowElement[] => {
+	const control = classed('button', 'fold');
+	const line = classed('tr', 'monitor-action', lead('td', control), ...cells);
+	const code = classed('td', 'monitor-code', classed('pre', 'monitor-sql', sql));
+	// The fold keeps the leading column, marked as the open line's is, so the column runs on
+	// unbroken and the SQL sits under the cells it belongs to rather than across the handle.
+	const fold = classed('tr', 'monitor-fold open', lead('td'), code);
+
+	control.type = 'button';
+	control.title = 'Ver el SQL';
+	control.setAttribute('aria-label', 'Ver el SQL');
+	code.colSpan = cells.length;
+
+	const set = (open: boolean) => {
+		control.setAttribute('aria-expanded', String(open));
+		line.classList.toggle('open', open);
+		fold.hidden = !open;
+
+		if (open) unfolded.add(key); else unfolded.delete(key);
+	};
+
+	line.addEventListener('click', () => set(!line.classList.contains('open')));
+	set(unfolded.has(key));
+
+	return [line, fold];
 };
 
 /** A titled part of the panel, like the record panel's "Detalles". */
@@ -165,39 +199,14 @@ export function monitorScreen({ meta, operators, seconds, status, hrefOf, close,
 		return line;
 	};
 
-	/** An action, and under it the SQL it ran. The leading column holds the control that unfolds it,
-	 * as every grid's holds the one that opens a record; the whole line answers a click too, since
-	 * it has nothing else to do with one. The control is a button, so the keyboard gets there and
-	 * Enter on it is a click that reaches the line like any other. */
+	/** An action, and under it the SQL it ran. */
 	const actionLines = (user: string) => (a: Activity): HTMLTableRowElement[] => {
-		const key = `${user} ${a.at}`;
-		const control = classed('button', 'fold');
 		const request = classed('span', 'monitor-request', readable(a.request));
-		const line = classed('tr', 'monitor-action',
-			lead('td', control), el('td', when(a.at)), el('td', a.screen ?? ''), el('td', request));
-		const code = classed('td', 'monitor-code', classed('pre', 'monitor-sql', a.statements));
-		// The fold keeps the leading column, marked as the open line's is, so the column runs on
-		// unbroken and the SQL sits under the cells it belongs to rather than across the handle.
-		const fold = classed('tr', 'monitor-fold open', lead('td'), code);
 
-		control.type = 'button';
-		control.title = 'Ver el SQL';
-		control.setAttribute('aria-label', 'Ver el SQL');
 		request.title = readable(a.request);
-		code.colSpan = ACTION_HEADINGS.length;
 
-		const set = (open: boolean) => {
-			control.setAttribute('aria-expanded', String(open));
-			line.classList.toggle('open', open);
-			fold.hidden = !open;
-
-			if (open) unfolded.add(key); else unfolded.delete(key);
-		};
-
-		line.addEventListener('click', () => set(!line.classList.contains('open')));
-		set(unfolded.has(key));
-
-		return [line, fold];
+		return foldingLine(unfolded, `${user} ${a.at}`,
+			[el('td', when(a.at)), el('td', a.screen ?? ''), el('td', request)], a.statements);
 	};
 
 	const drawTabs = (tabs: Viewer[]) => {

@@ -3,9 +3,10 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Request, RequestHandler } from 'express';
+import type { Dump } from '../db/dump.js';
 import { type Db, withValues } from '../db/postgres.js';
 import { checkedValues, rowValues } from '../schema/values.js';
-import type { Activity, Online } from '../shared/api.js';
+import type { Activity, Dumped, DumpRead, Online } from '../shared/api.js';
 import type { ColumnInfo, Columns } from '../schema/model.js';
 import { equalities, filterConditions, where } from '../sql/filter.js';
 import { columnList, q, tableRef } from '../sql/identifier.js';
@@ -47,6 +48,10 @@ const userAt = new Map([...[U_USERNAME, U_ROLE].map(c => [c, u(c)] as const), ..
 /** The columns that are shown in the activity log. */
 export const ACTION_FILTERS = LAST;
 
+/** The columns the SQL dump is read back by (SCOPE 7d): a statement written down is an action's
+ * time and SQL, one statement at a time. */
+export const DUMP_FILTERS = [A_AT, A_STATEMENTS];
+
 /** A row of the log as it goes out. */
 const activityOf = (row: Record<string, unknown>): Activity | null => {
 	const one = rowValues(LAST, row);
@@ -78,6 +83,12 @@ export const traced = (db: Db): Db => ({
 	},
 	close: () => db.close(),
 });
+
+
+/** SQL: `column` mentions none of `names`, compared as plain text, as a statement names a table. */
+const mentionsNone = (column: string, names: string[], params: unknown[]): string =>
+	`not exists (select 1 from unnest($${params.push(names)}::text[]) as ${q('hidden')}(${q('ref')})`
+	+ ` where strpos(${column}, ${q('ref')}) > 0)`;
 
 
 // --- The activity log ---
@@ -118,8 +129,7 @@ export function activityStore(db: Db): Activities {
 	/** SQL to filter the activity log to tables the user is allowed to see. */
 	const visible = ({ screens, tables }: Unseen, params: unknown[]): string =>
 		`(${q(A_SCREEN.name)} is null or not ${q(A_SCREEN.name)} = any($${params.push(screens)}::text[]))`
-		+ ` and not exists (select 1 from unnest($${params.push(tables)}::text[]) as ${q('hidden')}(${q('ref')})`
-		+ ` where strpos(${q(A_STATEMENTS.name)}, ${q('ref')}) > 0)`;
+		+ ` and ${mentionsNone(q(A_STATEMENTS.name), tables, params)}`;
 
 	return {
 
@@ -176,6 +186,50 @@ export function activityStore(db: Db): Activities {
 				+ ` order by ${q(A_AT.name)} desc`, params);
 
 			return rows.map(row => activityOf(row)!);
+		},
+	};
+}
+
+
+// --- Reading the SQL dump ---
+
+/** Max. num. of statements to show in the dump, the newest. */
+const DUMP_LIMIT = 500;
+
+export interface DumpLog {
+	/** What took effect, newest first.
+	 * @param hidden statements the user is not allowed to see
+	 * @param filter as `?filter=` carries it, on `DUMP_FILTERS` */
+	read(hidden: string[], filter: Record<string, unknown>): Promise<DumpRead>;
+}
+
+/** The SQL dump, read back.
+ * @param plain the DB connection, not `traced` */
+export function dumpLog(plain: Db, dump: Dump): DumpLog {
+	const [at, statements] = DUMP_FILTERS;
+
+	return {
+		async read(hidden, filter) {
+			const written = await dump.written();
+			const params: unknown[] = [written.map(w => w.at), written.map(w => w.statement)];
+			const rows = await plain.query(
+				`select ${columnList(DUMP_FILTERS)}, count(*) over () as ${q('total')}`
+				+ ` from unnest($1::${at.type.sqlType}[], $2::${statements.type.sqlType}[])`
+				+ ` with ordinality as ${q('d')}(${columnList(DUMP_FILTERS)}, ${q('n')})`
+				+ `${where([
+					mentionsNone(q(statements.name), hidden, params),
+					...filterConditions(named(DUMP_FILTERS), filter, params),
+				])}`
+				+ ` order by ${q('n')} desc limit ${DUMP_LIMIT}`, params);
+
+			return {
+				total: Number(rows[0]?.total ?? 0),
+				entries: rows.map(row => {
+					const one = rowValues(DUMP_FILTERS, row);
+
+					return { at: String(one[at.name]), statements: String(one[statements.name]) } satisfies Dumped;
+				}),
+			};
 		},
 	};
 }

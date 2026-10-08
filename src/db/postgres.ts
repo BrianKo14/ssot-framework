@@ -3,8 +3,11 @@
 import pg from 'pg';
 import { HttpError } from '../errors.js';
 
+/** A row as the driver answers it. */
+export type Row = pg.QueryResultRow;
+
 export interface Db {
-  query<T extends pg.QueryResultRow>(text: string, params?: unknown[]): Promise<T[]>;
+  query<T extends Row>(text: string, params?: unknown[]): Promise<T[]>;
   close(): Promise<void>;
 }
 
@@ -29,13 +32,19 @@ const asHttpError = (err: unknown): unknown => {
 
 // --- Reading a statement back ---
 
+/** Converts a string to a SQL literal.
+ * One value per line (line breaks are escaped). */
+const textLiteral = (s: string): string => /[\n\r]/.test(s)
+  ? `E'${s.replace(/[\\']/g, m => m + m).replace(/\n/g, '\\n').replace(/\r/g, '\\r')}'`
+  : pg.escapeLiteral(s);
+
 /** Converts a value to a string representation that can be used in a SQL query. */
-const literal = (value: unknown): string => {
+export const literal = (value: unknown): string => {
   if (value === null || value === undefined) return 'null';
   if (typeof value === 'number' || typeof value === 'bigint' || typeof value === 'boolean') return String(value);
   if (Array.isArray(value)) return `array[${value.map(literal).join(', ')}]`;
 
-  return pg.escapeLiteral(typeof value === 'string' ? value : JSON.stringify(value));
+  return textLiteral(typeof value === 'string' ? value : JSON.stringify(value));
 };
 
 /** A SQL statement with its values inserted in place of placeholders.

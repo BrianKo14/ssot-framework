@@ -2,8 +2,10 @@
 
 import { buildApp } from './api/app.js';
 import { monitorAccess } from './api/monitor.js';
+import { dumpLog } from './auth/activity.js';
 import { dbAuthenticator } from './auth/store.js';
 import { loadConfig } from './config.js';
+import { dumpTo } from './db/dump.js';
 import { connect } from './db/postgres.js';
 import type { TableInfo } from './schema/model.js';
 
@@ -18,10 +20,12 @@ export interface Grants {
 export async function serve(tables: TableInfo[], grants: Grants = {}): Promise<void> {
 	const monitor = monitorAccess(grants.monitor ?? []);		// checked before anything is opened
 	const config = loadConfig();
-	const db = await connect(config.databaseUrl);
+	const plain = await connect(config.databaseUrl);
+	const dump = config.sqlDump === undefined ? undefined : dumpTo(plain, config.sqlDump);
+	const db = dump?.db ?? plain;							// everything the server runs
 	const auth = dbAuthenticator(db, config.sessionTtl);
 
-	const server = buildApp(db, tables, auth, config, monitor)
+	const server = buildApp(db, tables, auth, config, monitor, dump && dumpLog(plain, dump))
 		.listen(config.port, () => console.log(`Listening on port ${config.port}`));
 
 	// Catch Ctrl+C and process-manager stop signals => close server and DB pool cleanly.

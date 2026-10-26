@@ -7,7 +7,7 @@
     "types": [],
     "strict": true,
     "rootDir": "src/frontend",
-    "outDir": "public",
+    "outDir": "public/_app",
     "sourceMap": true
   },
   "include": ["src/frontend", "src/shared"]

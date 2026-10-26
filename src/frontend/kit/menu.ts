@@ -1,11 +1,11 @@
-// The dropdown. Opened by the filter bar (its steps) and by the toolbar (its actions).
+// The dropdown. Used by the filter bar, the toolbar's actions and the fk picker.
 
 import { classed, el } from './dom.js';
 
 /** One line of a dropdown. */
 export interface Option {
 	text: string;
-	/** Shown beside the text — e.g. a column's type or an operator's symbol. */
+	/** Shown beside the text, e.g. a column's type or an operator's symbol. */
 	hint?: string;
 	pick(): void;
 }
@@ -13,24 +13,23 @@ export interface Option {
 export interface Menu {
 	readonly element: HTMLElement;
 	isOpen(): boolean;
-	/** @param head the group's caption; omit when the list needs none. */
+	/** @param head the group's caption, if any */
 	open(head: string | undefined, options: Option[]): void;
 	close(): void;
 	step(by: number): void;
-	/** The highlighted line, if the dropdown is open. */
+	/** The highlighted line, if open. */
 	current(): Option | undefined;
-	/** Removes the dropdown and its listeners — call for a per-edit dropdown so a long session
-	    doesn't accumulate them; a screen-long one never needs it. */
+	/** Removes it and its listeners. Needed for one built per edit; a screen-long one never is. */
 	destroy(): void;
 }
 
-let ids = 0;	// unique per instance, so a controller's aria-controls never collides
+let ids = 0;	// so each menu's aria-controls id is unique on the page
 
 /**
- * @param controller the input or button it hangs from; its `aria-expanded` follows the dropdown
- * @param within the box both sit in — a press outside it closes the dropdown
- * @param anchored position it against the controller by hand, for use inside a scrolling box
- * (a CSS-positioned dropdown would get clipped there)
+ * @param controller the input or button it hangs from; its `aria-expanded` follows the menu
+ * @param within the box both sit in; a press outside it closes the menu
+ * @param anchored place it by hand against the controller, for use inside a scrolling box
+ * (a CSS-placed one would be clipped there)
  */
 export function menu(controller: HTMLElement, within: HTMLElement, anchored = false): Menu {
 	const element = classed('ul', 'menu');
@@ -47,7 +46,7 @@ export function menu(controller: HTMLElement, within: HTMLElement, anchored = fa
 
 	const isOpen = () => !element.hidden;
 
-	/** Against the controller's box, in viewport coordinates, so no ancestor's overflow cuts it. */
+	/** In viewport coordinates, so no ancestor's overflow cuts it. */
 	const place = () => {
 		const box = controller.getBoundingClientRect();
 
@@ -103,18 +102,17 @@ export function menu(controller: HTMLElement, within: HTMLElement, anchored = fa
 		lines[active].scrollIntoView({ block: 'nearest' });
 	};
 
-	// Abortable, so a dropdown built per edit can take its listeners with it when it goes.
+	// abortable, so `destroy` takes the listeners with it
 	const listeners = new AbortController();
 	const { signal } = listeners;
 
-	// Capture phase: a pick rebuilds the list before this sees the click, so a bubble-phase
-	// "still inside?" check would wrongly say no and close it again.
+	// Capture phase: a pick rebuilds the list before a bubbling listener would see the click,
+	// and the "still inside?" check would then wrongly close it.
 	addEventListener('mousedown', e => {
 		if (e.target instanceof Node && !within.contains(e.target)) close();
 	}, { capture: true, signal });
 
 	if (anchored) {
-		// placed once on opening, and kept there: what it hangs from moves with the box it scrolls in
 		addEventListener('scroll', () => { if (isOpen()) place(); }, { capture: true, signal });
 		addEventListener('resize', () => { if (isOpen()) place(); }, { signal });
 	}

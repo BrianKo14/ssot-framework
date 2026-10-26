@@ -1,31 +1,29 @@
-// The dropdown an fk field offers: rows of the table it points at, labeled by their `isName`
-// columns. Hangs off the same text box the value is typed into — you can still type the key
-// by hand, this just suggests into the same box.
+// The list an fk field offers: rows of the table it points at, labeled by their `isName`
+// columns. It suggests into the same box the key can still be typed into by hand.
 
-import type { ReferenceMeta, TableMeta } from '../shared/api.js';
-import { api } from './api.js';
-import { labelOf, searchColumn, valuesFrom, valuesOf } from './fk.js';
-import { menu } from './menu.js';
-import { filterQuery, listPath } from './query.js';
-
-type Row = Record<string, unknown>;
+import type { ReferenceMeta, TableMeta } from '../../shared/api.js';
+import { menu } from '../kit/menu.js';
+import { labelOf, searchColumn, valuesFrom, valuesOf } from '../model/fk.js';
+import { filterQuery, listPath } from '../model/query.js';
+import type { Row } from '../model/rows.js';
+import { api } from '../wire/api.js';
 
 /** How long typing settles before the list is asked again. */
 const SETTLE = 200;
 
 export interface Picker {
-	/** Offers the key to the list first. True when the list took it and the box must not act. */
+	/** Offers the key to the list first. True if the list took it, and the box must not act. */
 	handled(e: KeyboardEvent): boolean;
-	/** Re-asks for the list, after the box's text changed. */
+	/** Asks for the list again, after the box's text changed. */
 	refresh(): void;
 	close(): void;
-	/** Called when the box it hangs from goes: see `Menu.destroy`. */
+	/** For when the box it hangs from goes: see `Menu.destroy`. */
 	destroy(): void;
 }
 
 /**
- * @param input the box the value is written in; the list hangs from it and writes into it
- * @param within the cell or field both sit in — a press outside it closes the list
+ * @param input the box the value is written in; the list hangs from it
+ * @param within the cell or field both sit in; a press outside it closes the list
  */
 export function picker(
 	input: HTMLInputElement,
@@ -34,16 +32,15 @@ export function picker(
 	target: TableMeta,
 	onPick: (values: Row) => void,
 ): Picker {
-	const list = menu(input, within, true);		// anchored: the box scrolls inside the grid or the panel
+	const list = menu(input, within, true);		// anchored: the box scrolls inside the grid or panel
 
 	within.append(list.element);
 
 	let timer = 0;
 	let wanted: string | null = null;		// the text the list on screen answers, if any
-	let searching = false;				// the box opens holding a key, not a name: that is not a search
+	let searching = false;				// the box opens holding a key, not a name to search for
 
-	/** Nothing until the box has actually been typed into — the value already there is the
-	    fk's own key, and would match no name. */
+	/** Nothing until the box is typed into: what's there is the key, which matches no name. */
 	const term = () => (searching ? input.value.trim() : '');
 
 	const line = (row: Row) => ({
@@ -52,8 +49,8 @@ export function picker(
 		pick: () => { list.close(); onPick(valuesFrom(ref, row)); },
 	});
 
-	/** A `contains` filter on the target's search column (casts to text server-side, so an
-	    integer key is searchable too), or none when it has no such column. */
+	/** `contains` on the target's search column (the server casts to text, so an integer key
+	 * works too), or no filter if it has none. */
 	const asked = (typed: string) => {
 		const column = searchColumn(target);
 
@@ -64,12 +61,11 @@ export function picker(
 		try {
 			const rows = await api<Row[]>(listPath(target.entity, { filter: asked(typed) }));
 
-			if (typed !== wanted) return;	// a later keystroke already asked for something else
+			if (typed !== wanted) return;	// a later keystroke asked for something else
 
 			list.open(target.entity, rows.map(line));
 		} catch {
-			// unlistable is fine — the box still takes typed input, and save reports whatever
-			// the server makes of it
+			// fine: the box still takes typed input, and saving reports what the server says
 			close();
 		}
 	};
@@ -96,7 +92,7 @@ export function picker(
 		['Enter', e => {
 			const one = list.current();
 
-			if (!one) return false;		// nothing highlighted: the box's own Enter stands
+			if (!one) return false;		// nothing highlighted: the box's own Enter applies
 
 			e.preventDefault();
 			one.pick();
@@ -104,7 +100,7 @@ export function picker(
 			return true;
 		}],
 		['Escape', e => {
-			if (!list.isOpen()) return false;	// nothing to close: the box's own Escape stands
+			if (!list.isOpen()) return false;	// nothing to close: the box's own Escape applies
 
 			e.stopPropagation();
 			close();

@@ -7,8 +7,7 @@ build/
 *.tsbuildinfo
 
 # Frontend build output
-public/*.js
-public/*.js.map
+public/_app/
 
 # Environment variables
 .env

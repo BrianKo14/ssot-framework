@@ -24,12 +24,23 @@ export const classed = <K extends keyof HTMLElementTagNameMap>(
 	return node;
 };
 
-/** The grid's sticky leading column.
+/** A plain (non-submit) button.
+ * @param label its tooltip and accessible name, for a button drawn as an icon */
+export const button = (className: string, label?: string) => {
+	const node = classed('button', className);
 
-    How many controls it was given is written on the cell, because the mark a cursor leaves has to
-    find the first of them and only this cell knows how many there are. It is counted off the
-    children rather than declared, so it follows what `Sheet.handle` (`main.ts`) gave it and no sheet is asked
-    a second time which one it is. */
+	node.type = 'button';
+
+	if (label !== undefined) {
+		node.title = label;
+		node.setAttribute('aria-label', label);
+	}
+
+	return node;
+};
+
+/** The grid's sticky leading column.
+ * `--slots` counts its controls, so the stylesheet can place a cursor's mark after them. */
 export const lead = (tag: 'th' | 'td', ...children: Node[]) => {
 	const node = el(tag, ...children);
 

@@ -1,11 +1,11 @@
-// The filter bar.
+// The filter bar: conditions written as column, then comparison, then value.
 
-import type { OperatorMeta, TableMeta } from '../shared/api.js';
-import { classed, el } from './dom.js';
-import { kinshipOf, type Reachable, reachableFrom } from './fk.js';
-import { menu, type Option } from './menu.js';
-import { filterQuery } from './query.js';
-import { type Condition, operand } from './route.js';
+import type { OperatorMeta, TableMeta } from '../../shared/api.js';
+import { button, classed, el } from '../kit/dom.js';
+import { menu, type Option } from '../kit/menu.js';
+import { kinshipOf, type Reachable, reachableFrom } from '../model/fk.js';
+import { filterQuery } from '../model/query.js';
+import { type Condition, operand } from '../model/route.js';
 
 /** The condition being written: a column, then a comparison, then a value. */
 interface Draft {
@@ -13,7 +13,7 @@ interface Draft {
 	operator?: OperatorMeta;
 }
 
-/** One thing the dropdown can offer here. `take` moves the draft on to the next step. */
+/** One thing the dropdown offers. `take` moves the draft to the next step. */
 interface Choice {
 	text: string;
 	hint: string;
@@ -24,16 +24,14 @@ export interface FilterBar {
 	readonly element: HTMLElement;
 	reset(t: TableMeta, seed?: Condition[]): void;
 	conditions(): Condition[];
-	/** The current filter as a `?filter=` value, or `undefined` when there is none. */
+	/** The `?filter=` value, or `undefined` when there is none. */
 	query(): string | undefined;
 }
 
 /**
- * @param tables every table `_meta` published, so the bar can offer the columns of the ones this
- * screen points at as well as its own (SCOPE 6b). An fk onto a table the role cannot read is not
- * in `_meta`, so its columns are neither offered nor filterable.
- * @param operators the comparisons the backend offers, taken from `_meta`
- * @param apply called whenever `query()`'s answer changes
+ * @param tables every table in `_meta`, to also offer the ancestors' columns (SCOPE 6b)
+ * @param operators the comparisons in `_meta`
+ * @param apply called whenever `query()` changes
  */
 export function filterBar(tables: TableMeta[], operators: OperatorMeta[], apply: () => void): FilterBar {
 	const entry = el('input');
@@ -55,12 +53,12 @@ export function filterBar(tables: TableMeta[], operators: OperatorMeta[], apply:
 	let applied: Condition[] = [];
 	let being: Draft = {};
 
-	let restoring = false;					// when the box is redrawn, keep focus on the entry
+	let restoring = false;					// a redraw keeps the focus on the entry
 
 
 	// --- What the dropdown offers ---
 
-	/** A reached column says which ancestor it came off; its own say their type, as before. */
+	/** e.g. `varchar · padre` for an ancestor's column, `varchar` for an own one. */
 	const about = (c: Reachable) =>
 		c.via.length ? `${c.column.type} · ${kinshipOf(c.via)}` : c.column.type;
 
@@ -94,10 +92,10 @@ export function filterBar(tables: TableMeta[], operators: OperatorMeta[], apply:
 
 	const choose = (choice: Choice) => {
 		choice.take();
-		entry.value = '';				
+		entry.value = '';
 
 		if (being.operator && !being.operator.takesValue) commit();
-		else { redraw(); openMenu(); }			
+		else { redraw(); openMenu(); }
 
 		entry.focus();
 	};
@@ -106,14 +104,11 @@ export function filterBar(tables: TableMeta[], operators: OperatorMeta[], apply:
 	// --- What is on screen ---
 
 	const remover = (label: string, act: () => void) => {
-		const button = classed('button', 'x');
+		const x = button('x', label);
 
-		button.title = label;
-		button.setAttribute('type', 'button');
-		button.setAttribute('aria-label', label);
-		button.addEventListener('click', () => { act(); entry.focus(); });
+		x.addEventListener('click', () => { act(); entry.focus(); });
 
-		return button;
+		return x;
 	};
 
 	const remove = (a: Condition) => () => {
@@ -212,13 +207,13 @@ export function filterBar(tables: TableMeta[], operators: OperatorMeta[], apply:
 		['ArrowUp', e => { e.preventDefault(); step(-1); }],
 		['Enter', e => { e.preventDefault(); const one = list.current(); if (one) one.pick(); else commit(); }],
 		['Escape', e => {
-			e.stopPropagation();				// the peek's Escape must not fire too
+			e.stopPropagation();				// don't close the panel too
 
 			if (list.isOpen()) list.close();
 			else if (being.column) discard();
 		}],
 		['Backspace', e => {
-			if (entry.value !== '') return;	
+			if (entry.value !== '') return;
 
 			e.preventDefault();
 			back();
@@ -240,7 +235,6 @@ export function filterBar(tables: TableMeta[], operators: OperatorMeta[], apply:
 
 	// --- What the screen asks of it ---
 
-	// what a condition on screen is on the wire; the format itself lives in `query.ts`
 	const encode = (all: Condition[]) =>
 		filterQuery(all.map(a => ({ column: a.column.name, op: a.operator.name, value: a.value })));
 

@@ -7,7 +7,7 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.frontend.json",
+    "build": "tsc -p tsconfig.json && rm -rf public/_app && tsc -p tsconfig.frontend.json",
     "build:watch": "tsc -p tsconfig.json --watch",
     "build:watch:frontend": "tsc -p tsconfig.frontend.json --watch",
     "db:create": "node --env-file=.env dist/example/schema.js",

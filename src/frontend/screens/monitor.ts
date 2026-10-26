@@ -1,28 +1,26 @@
-// The monitor screen (SCOPE 8a, 8b): who is signed in, as a list drawn like any table's, whose
-// lines open a panel the way a record's do. The panel holds the tables that user has open and
-// everything they did, newest first, each action unfolding into the SQL it ran. The list and the
-// actions each have the filter bar every screen has, on the columns `_meta` describes them by.
+// The monitor screen (SCOPE 8a, 8b): who is signed in, listed like a table. A line opens a
+// panel with the tables that user has open and everything they did, newest first, each action
+// unfolding into the SQL it ran.
 //
-// A screen of the framework's own, like the login: what it lists is not a table of the schema,
-// so it is not drawn by the grid, and it never edits anything. It does borrow the grid's look —
-// the leading column and its expand control, the panel's frame — so it reads as one more screen.
+// One of the framework's own screens: it lists no table of the schema and edits nothing, but it
+// borrows the grid's look so it reads as one more screen.
 
-import type { Activity, Monitored, MonitorMeta, Online, OperatorMeta, Viewer } from '../shared/api.js';
-import { api, ApiError } from './api.js';
-import { sessionEnded } from './auth.js';
-import { byId, classed, el, lead } from './dom.js';
-import { type FilterBar, filterBar } from './filters.js';
-import type { Status } from './status.js';
+import type { Activity, Monitored, MonitorMeta, Online, OperatorMeta, Viewer } from '../../shared/api.js';
+import { type FilterBar, filterBar } from '../controls/filters.js';
+import { button, byId, classed, el, lead } from '../kit/dom.js';
+import type { Status } from '../kit/status.js';
+import { count, toSecond } from '../kit/text.js';
+import { api, ApiError } from '../wire/api.js';
+import { restarted } from '../wire/auth.js';
 
-/** The monitor's name: the screen's address and the endpoint's, as `api/monitor.ts` mounts it. */
+/** The screen's address and the endpoint's, as `api/monitor.ts` mounts it. */
 export const MONITOR = '_monitor';
 
 export interface Monitor {
-	/** Shows the monitor with `picked`'s panel open, or none; asks now and every round after,
-	 * drawing each answer, until `stop`. Said again with another user, it moves the pick. */
+	/** Shows it with `picked`'s panel open, or none, and polls until `stop`. */
 	show(picked: string | null): void;
 	stop(): void;
-	/** The list's filter bar, for the screen's toolbar; shown while the monitor is. */
+	/** The list's filter bar, for the toolbar; shown while the monitor is. */
 	readonly bar: HTMLElement;
 }
 
@@ -30,33 +28,28 @@ export interface MonitorOptions {
 	meta: MonitorMeta;
 	operators: OperatorMeta[];
 	seconds: number;
-	/** The counts go in its pill; what a filter got wrong is listed beside it, as on any screen. */
+	/** For the counts, and what a filter got wrong. */
 	status: Status;
 	/** The monitor's address with one user picked. */
 	hrefOf(user: string): string;
-	/** What letting go of the pick is: going back to the monitor's own address. */
+	/** Letting go of the pick: back to the monitor's own address. */
 	close(): void;
-	/** This browser tab's presence name, so the answer leaves it out as every screen's does. */
+	/** This tab's presence name, so the answer leaves it out. */
 	tab(): string | null;
-	/** Called with every open tab after each answer that changed: what the rail draws. */
+	/** Every open tab, after each answer that changed: for the rail. */
 	seen(tabs: Viewer[]): void;
 }
 
 const USER_HEADINGS = ['Usuario', 'Rol', 'Última actividad', 'Pantalla'];
 const ACTION_HEADINGS = ['Cuándo', 'Pantalla', 'Request'];
 
-/** "2026-09-30 15:37:08", without the fraction the database adds. */
-export const when = (at: string) => at.slice(0, 19);
-
-/** The request as it would be typed: a filter reads as the JSON it is, not as `%7B%22…`. */
+/** The request as typed: a filter reads as JSON, not `%7B%22…`. */
 const readable = (request: string) => {
 	try { return decodeURIComponent(request); } catch { return request; }
 };
 
-const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
-
 /** A table with its headings, and the body its rows go into.
- * @param leading whether it has the grid's leading column, for the control that opens a line */
+ * @param leading whether it has the grid's leading column */
 export const table = (headings: string[], leading: boolean) => {
 	const body = el('tbody');
 	const head = el('tr', ...(leading ? [lead('th')] : []), ...headings.map(h => el('th', h)));
@@ -64,24 +57,17 @@ export const table = (headings: string[], leading: boolean) => {
 	return { table: el('table', el('thead', head), body), body };
 };
 
-/** A line, and under it the SQL it is about, folded until asked for. The leading column holds the
- * control that unfolds it, as every grid's holds the one that opens a record; the whole line answers
- * a click too, since it has nothing else to do with one. The control is a button, so the keyboard
- * gets there and Enter on it is a click that reaches the line like any other.
- * @param unfolded the keys of the lines open now, kept up to date, so reading the list again does
- * not fold them back
+/** A line, and under it its SQL, folded until asked for. The whole line unfolds it on a click;
+ * the leading button is there for the keyboard.
+ * @param unfolded the keys of the open lines, kept up to date so a re-read doesn't fold them
  * @param cells the line's own, after the leading column */
 export const foldingLine = (unfolded: Set<string>, key: string, cells: HTMLElement[], sql: string): HTMLTableRowElement[] => {
-	const control = classed('button', 'fold');
+	const control = button('fold', 'Ver el SQL');
 	const line = classed('tr', 'monitor-action', lead('td', control), ...cells);
 	const code = classed('td', 'monitor-code', classed('pre', 'monitor-sql', sql));
-	// The fold keeps the leading column, marked as the open line's is, so the column runs on
-	// unbroken and the SQL sits under the cells it belongs to rather than across the handle.
+	// the fold keeps a leading cell too, so the SQL sits under the cells, not under the handle
 	const fold = classed('tr', 'monitor-fold open', lead('td'), code);
 
-	control.type = 'button';
-	control.title = 'Ver el SQL';
-	control.setAttribute('aria-label', 'Ver el SQL');
 	code.colSpan = cells.length;
 
 	const set = (open: boolean) => {
@@ -108,7 +94,7 @@ const tabChip = (tab: Viewer) =>
 		classed('b', 'monitor-screen', tab.entity),
 		...tab.records.map(record => classed('span', 'monitor-record', record)));
 
-/** A list's address, with whatever its filter bar asks, and anything else it is asked with. */
+/** A list's address, with its filter bar's filter and anything else asked. */
 const asking = (path: string, bar: FilterBar, more: Record<string, string | null> = {}) => {
 	const query = new URLSearchParams();
 
@@ -134,8 +120,8 @@ export function monitorScreen({ meta, operators, seconds, status, hrefOf, close,
 	const actionsHeading = classed('h3', 'watch-heading');
 	const noActions = classed('p', 'watch-empty');
 
-	// One bar per list, each on the columns `_meta` describes that list by. Not in the address: both
-	// lists have an `at` and a `screen`, and the address has one place to say each.
+	// One bar per list, on the columns `_meta` describes it by. Not in the address: both lists
+	// have an `at` and a `screen`, and the address has room for one of each.
 	const userBar = filterBar([meta.users], operators, () => { drawn = ''; void ask(); });
 	const actionBar = filterBar([meta.actions], operators, () => { if (picked !== null) void readActions(picked); });
 
@@ -143,8 +129,7 @@ export function monitorScreen({ meta, operators, seconds, status, hrefOf, close,
 	actionBar.reset(meta.actions);
 	userBar.element.hidden = true;			// shown with the monitor
 
-	// The actions are drawn the way the record panel draws its subtables: a raised region with its
-	// heading, a strip (the filter bar, where a subtable has its tabs), and the grid's own `.sheet`.
+	// drawn like the record panel's subtables: heading, a strip (the filter bar), and a `.sheet`
 	box.replaceChildren(users.table);
 	byId('watch-body').replaceChildren(
 		part(tabsHeading, tabList, noTabs),
@@ -157,29 +142,25 @@ export function monitorScreen({ meta, operators, seconds, status, hrefOf, close,
 
 	let picked: string | null = null;
 
-	/** The picked user's newest action, as the list said it last, and as it said it when their
-	 * actions were last read: a round in which the two agree has nothing new to read. Compared on
-	 * the list's word rather than on the newest action drawn, since with a filter on, those can
-	 * differ for good. */
+	/** The picked user's newest action, as the list said it now and when their actions were
+	 * last read. When they agree there's nothing new to read. */
 	let newest: string | undefined;
 	let readAt: string | undefined;
 
-	/** Which actions are unfolded, so that reading the list again does not fold them back. */
+	/** Which actions are unfolded, so a re-read doesn't fold them back. */
 	const unfolded = new Set<string>();
 
 	/** A list that answered has nothing wrong with its filter any more. */
 	const answered = (bar: FilterBar) => status.standing(bar, []);
 
-	/** A list that did not answer: a filter it cannot ask stays listed until it is changed, a
-	 * session that ended reloads, and anything else says nothing — the next round tries again.
-	 * @param table where the problem is, when it is not the screen's own list: as a subtable says it */
+	/** A bad filter stays listed until changed; anything else is left to the next round.
+	 * @param table which list, when not the screen's own */
 	const refused = (bar: FilterBar, err: unknown, table?: string) => {
-		if (sessionEnded(err)) location.reload();
-		else if (err instanceof ApiError && err.status === 400) status.standing(bar, [{ what: err.message, table }]);
+		if (restarted(err)) return;
+		if (err instanceof ApiError && err.status === 400) status.standing(bar, [{ what: err.message, table }]);
 	};
 
-	/** The control that opens a user's panel: the expand mark every grid's lines carry, as a link,
-	 * since what it opens is an address. */
+	/** Opens a user's panel. A link, since what it opens is an address. */
 	const opener = (user: string) => {
 		const a = classed('a', 'handle');
 
@@ -192,7 +173,7 @@ export function monitorScreen({ meta, operators, seconds, status, hrefOf, close,
 
 	const userLine = (one: Online): HTMLTableRowElement => {
 		const line = el('tr', lead('td', opener(one.user)), el('td', one.user), el('td', one.role),
-			el('td', one.last === null ? '' : when(one.last.at)), el('td', one.last?.screen ?? ''));
+			el('td', one.last === null ? '' : toSecond(one.last.at)), el('td', one.last?.screen ?? ''));
 
 		line.classList.toggle('open', one.user === picked);
 
@@ -206,7 +187,7 @@ export function monitorScreen({ meta, operators, seconds, status, hrefOf, close,
 		request.title = readable(a.request);
 
 		return foldingLine(unfolded, `${user} ${a.at}`,
-			[el('td', when(a.at)), el('td', a.screen ?? ''), el('td', request)], a.statements);
+			[el('td', toSecond(a.at)), el('td', a.screen ?? ''), el('td', request)], a.statements);
 	};
 
 	const drawTabs = (tabs: Viewer[]) => {
@@ -215,8 +196,7 @@ export function monitorScreen({ meta, operators, seconds, status, hrefOf, close,
 		noTabs.hidden = tabs.length > 0;
 	};
 
-	/** Reads the picked user's actions again, under the panel's filter, and draws them — unless the
-	 * pick moved meanwhile. */
+	/** Reads the picked user's actions under the panel's filter, unless the pick moved meanwhile. */
 	const readActions = async (user: string): Promise<void> => {
 		readAt = newest;
 
@@ -240,7 +220,7 @@ export function monitorScreen({ meta, operators, seconds, status, hrefOf, close,
 		noActions.textContent = actionBar.query() === undefined ? 'Sin actividad registrada.' : 'Ninguna acción cumple el filtro.';
 	};
 
-	/** The panel as it opens on a user, before anything about them has arrived. */
+	/** The panel opening on a user, before anything about them arrives. */
 	const opened = (user: string) => {
 		newest = undefined;
 		title.textContent = user;
@@ -252,7 +232,7 @@ export function monitorScreen({ meta, operators, seconds, status, hrefOf, close,
 		drawTabs([]);
 	};
 
-	/** What was drawn last, so that a round that says the same thing redraws nothing. */
+	/** What was drawn last, so a round that says the same redraws nothing. */
 	let drawn = '';
 	let timer: ReturnType<typeof setInterval> | undefined;
 
@@ -286,8 +266,7 @@ export function monitorScreen({ meta, operators, seconds, status, hrefOf, close,
 			status.say(`${count(online.length, 'usuario conectado', 'usuarios conectados')} · ${count(listed.length, 'tabla abierta', 'tablas abiertas')}`);
 		}
 
-		// The actions are read again only when the picked user has done something since: their
-		// newest action is in the list already, so this costs no request of its own.
+		// read the actions again only if the user did something since (the list says so for free)
 		if (picked !== null && newest !== undefined && newest !== readAt) await readActions(picked);
 	};
 
@@ -303,7 +282,7 @@ export function monitorScreen({ meta, operators, seconds, status, hrefOf, close,
 			userBar.element.hidden = false;
 
 			if (moved) {
-				drawn = '';					// the list lights the pick, so it is drawn again
+				drawn = '';					// the list highlights the pick, so redraw it
 				if (user !== null) {
 					opened(user);
 					void readActions(user);
@@ -323,7 +302,7 @@ export function monitorScreen({ meta, operators, seconds, status, hrefOf, close,
 			box.hidden = true;
 			panel.hidden = true;
 			userBar.element.hidden = true;
-			status.standing(userBar, []);			// what is wrong with the monitor is not wrong elsewhere
+			status.standing(userBar, []);			// not wrong anywhere else
 			status.standing(actionBar, []);
 		},
 	};

@@ -1,48 +1,39 @@
-// What the screen says about itself — the pill in the header — and what is wrong on it.
+// The status pill in the header, and the list of what is wrong on screen.
 //
-// The pill holds one line and is read at a glance, so it only ever says one thing: the counts,
-// or what was just done. A problem takes it over for a moment, in red, as it happens, and then
-// gives it back. What is wrong *now* is listed beside it, under a warning mark, for exactly as
-// long as it is true: each part of the screen says what is wrong with it, and says so again —
-// with less, or with nothing — when that changes. Nothing is listed because it once happened.
+// The pill says one thing: the counts, or what was just done. A new problem takes it over for a
+// few seconds, in red. What is wrong *now* is listed beside it, for as long as it stays true.
 
 import { classed } from './dom.js';
 
-/** How long a problem holds the pill before it goes back to what it was saying. */
+/** How long a problem holds the pill. */
 const SHOWN_MS = 4000;
 
-/** One thing that is wrong, and where — so the list can say *where* once, in its own place, and
-    fold the same problem on several lines into one entry. */
+/** One thing that is wrong, and where. */
 export interface Problem {
-	/** What is wrong, as the server or the screen worded it. */
 	what: string;
-	/** What it is about beyond the screen's own table: a subtable's name, a record in the panel. */
+	/** Beyond the screen's own table: a subtable's name, a record in the panel. */
 	table?: string;
-	/** The line on screen, counted from one, when it is about one. */
+	/** The line on screen, counted from one. */
 	line?: number;
-	/** The column, when it is about one. */
 	field?: string;
 }
 
 export interface Status {
-	/** Says what stays said: the counts, or what was just done. Said while a problem is holding
-	 * the pill, it is what the pill goes back to — a problem is not cut short by the summary that
-	 * follows it. */
+	/** What stays said: the counts, or what was just done. If a problem is showing, the pill
+	 * goes back to this once it's over. */
 	say(message: string): void;
-	/** Says what is in flight, with a spinner. It does take the pill from a problem: something
-	 * new has started. */
+	/** What is in flight, with a spinner. */
 	busy(message: string): void;
-	/** Problems that just appeared: the pill shows the one — or that there are several — for a
-	 * moment. Whether they are listed is `standing`'s to say: a problem is listed while it is one. */
+	/** Problems that just happened: shown on the pill for a moment, not listed. */
 	fail(...problems: (Problem | string)[]): void;
-	/** What is wrong about one part of the screen (a sheet, an editor, the panel), replacing what
-	 * that part said before. Said with nothing, it is that part having nothing wrong any more. */
+	/** What is wrong with one part of the screen (a sheet, an editor, the panel), replacing what
+	 * that part said before. Empty means nothing is wrong with it anymore. */
 	standing(of: object, problems: Problem[]): void;
 }
 
 const problem = (p: Problem | string): Problem => (typeof p === 'string' ? { what: p } : p);
 
-/** "Fila 3", "Filas 1, 2, 3", "Filas 1, 2, 3, 4 y 6 más". */
+/** e.g. "Fila 3", "Filas 1, 2, 3", "Filas 1, 2, 3, 4 y 6 más". */
 const linesOf = (lines: number[]) => {
 	const shown = lines.slice(0, 4).join(', ');
 	const more = lines.length - 4;
@@ -50,11 +41,11 @@ const linesOf = (lines: number[]) => {
 	return lines.length === 1 ? `Fila ${shown}` : `Filas ${shown}${more > 0 ? ` y ${more} más` : ''}`;
 };
 
-/** Where a problem is, as its entry's first line: table, lines, column — whichever it has. */
+/** e.g. "linea · Filas 1, 2 · cantidad" */
 const whereOf = (p: Problem, lines: number[]) =>
 	[p.table, lines.length ? linesOf(lines) : undefined, p.field].filter(Boolean).join(' · ');
 
-/** The same problem on several lines is one entry: same table, same column, same words. */
+/** The same problem on several lines (same table, column and words) is one entry. */
 interface Entry {
 	problem: Problem;
 	lines: number[];
@@ -72,7 +63,7 @@ const entries = (problems: Problem[]): Entry[] => {
 		byKey.set(key, entry);
 	}
 
-	// by where they are on screen, so the list reads down the way the grid does
+	// in screen order, top to bottom
 	return [...byKey.values()]
 		.map(e => ({ ...e, lines: e.lines.sort((a, b) => a - b) }))
 		.sort((a, b) => (a.lines[0] ?? 0) - (b.lines[0] ?? 0));
@@ -83,7 +74,7 @@ const item = ({ problem: p, lines }: Entry) =>
 		classed('div', 'issue-where', whereOf(p, lines) || 'Pantalla'),
 		classed('div', 'issue-what', p.what));
 
-/** @param pill the header's status line; the warning mark is placed just before it. */
+/** @param pill the header's status line; the warning mark goes just before it. */
 export function statusOf(pill: HTMLElement): Status {
 	let resting = pill.textContent ?? '';
 	let timer: ReturnType<typeof setTimeout> | undefined;
@@ -99,7 +90,7 @@ export function statusOf(pill: HTMLElement): Status {
 
 	const show = (text: string, state: 'ready' | 'busy' | 'error') => {
 		pill.textContent = text;
-		pill.title = text;			// the pill cuts a long line short; this is all of it
+		pill.title = text;			// the pill cuts long lines short
 		pill.dataset.state = state;
 	};
 

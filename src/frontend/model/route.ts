@@ -1,12 +1,9 @@
-// The address bar (URL grammar)
+// The address bar (URL grammar): `/<screen>/<pk…>?<column>[.<op>]=<value>`.
 
-import type { OperatorMeta, SystemMeta, TableMeta } from '../shared/api.js';
+import type { OperatorMeta, SystemMeta, TableMeta } from '../../shared/api.js';
 import { type Reachable, reachableFrom } from './fk.js';
 
-
-/** One committed filter condition. The column may be one of an ancestor's (SCOPE 6b): what a
- * screen can *name* is derived from `_meta`, so the address resolves one without being told
- * which columns the grid happens to be showing. */
+/** One filter condition. The column may be an ancestor's (SCOPE 6b). */
 export interface Condition {
 	column: Reachable;
 	operator: OperatorMeta;
@@ -17,7 +14,7 @@ export interface Condition {
 export interface View {
 	/** `''` when the address names no screen. */
 	screen: string;
-	/** The open record's pk values, in order; empty when no record is open. */
+	/** The open record's pk values; empty when none is open. */
 	key: string[];
 	conditions: Condition[];
 }
@@ -32,12 +29,15 @@ export interface Router {
 	read(): Reading;
 	href(view: View): string;
 	go(view: View, replace?: boolean): void;
-	/** Updates the address without redrawing — for moves the screen already reflects. */
+	/** Updates the address without redrawing, for moves the screen already shows. */
 	mark(view: View, replace?: boolean): void;
 	onNavigate(draw: () => void): void;
 }
 
-/** Separates a column from the comparison asked of it: `edad.ge=30`. */
+/** A screen with no filter, e.g. `screenOf('cliente', ['3'])` -> `/cliente/3`. */
+export const screenOf = (screen: string, key: string[] = []): View => ({ screen, key, conditions: [] });
+
+/** Separates a column from its comparison, e.g. `edad.ge=30`. */
 const OP = '.';
 
 export const operand = (o: OperatorMeta, raw: string): string | null =>
@@ -47,7 +47,6 @@ const decoded = (raw: string): string => {
 	try { return decodeURIComponent(raw); } catch { return raw; }
 };
 
-export const same = (a: string[], b: string[]) => a.length === b.length && a.every((v, i) => v === b[i]);
 
 
 // --- The router ---
@@ -56,9 +55,8 @@ export function router(meta: SystemMeta): Router {
 	const operator = (name: string) => meta.operators.find(o => o.name === name);
 	const fallback = operator(meta.defaultOperator);
 
-	/** Whole name first, then split at the last `.`, so neither a column named `a.b` nor a path
-	    through an fk called `a` is made unreachable by the other. The namespace is wider than
-	    the table now — it holds what the table points at — but the reading is the same. */
+	/** The whole name first, then split at the last `.`, so neither a column named `a.b` nor a
+	 * path through an fk called `a` hides the other. */
 	const condition = (named: Reachable[], key: string, raw: string): Condition | undefined => {
 		const whole = named.find(c => c.name === key);
 
@@ -76,7 +74,7 @@ export function router(meta: SystemMeta): Router {
 
 	const read = (): Reading => {
 		const [screen = '', ...key] = location.pathname.split('/').filter(s => s !== '').map(decoded);
-		const t = meta.tables.find(x => x.entity === screen);
+		const t: TableMeta | undefined = meta.tables.find(x => x.entity === screen);
 		const conditions: Condition[] = [];
 		const unresolved: string[] = [];
 
@@ -96,7 +94,6 @@ export function router(meta: SystemMeta): Router {
 	const named = (c: Condition) =>
 		c.operator.name === meta.defaultOperator ? c.column.name : c.column.name + OP + c.operator.name;
 
-
 	const href = (view: View): string => {
 		const params = new URLSearchParams();
 
@@ -114,11 +111,12 @@ export function router(meta: SystemMeta): Router {
 		const url = href(view);
 		const stay = replace || url === location.pathname + location.search;
 
-		history[stay ? 'replaceState' : 'pushState'](null, '', url);	// only push when the address actually changes
+		history[stay ? 'replaceState' : 'pushState'](null, '', url);	// only push when the address changes
 	};
 
 	const go = (view: View, replace = false) => { mark(view, replace); draw?.(); };
 
+	/** Same-origin link clicks move the address instead of reloading the page. */
 	const intercept = (e: MouseEvent) => {
 		if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
 

@@ -1,13 +1,13 @@
-// The toolbar's action button.
+// A toolbar button with a dropdown of actions, each shown only where the role may run it.
 
-import type { Capability, TableMeta } from '../shared/api.js';
-import { classed, el } from './dom.js';
-import { menu, type Option } from './menu.js';
+import type { Capability, TableMeta } from '../../shared/api.js';
+import { classed, el } from '../kit/dom.js';
+import { menu, type Option } from '../kit/menu.js';
 
 /** One thing the toolbar can do to the screen showing. */
 export interface Action {
 	text: string;
-	/** Required capability — hidden unless `_meta` grants it for this screen. */
+	/** Hidden unless `_meta` grants this on the screen's table. */
 	needs: Capability;
 	run(t: TableMeta): void;
 }
@@ -19,19 +19,17 @@ export interface ActionMenu {
 	reset(t: TableMeta): void;
 }
 
-/** How the button is drawn. What it *does* is the same either way — only the shape differs,
-    so the stylesheet is told which one and nothing here knows what a mark looks like. */
+/** How the button is drawn; the stylesheet does the rest. */
 export interface Look {
-	/** Added beside `actions` on the box, for the stylesheet to hang the shape and mark on. */
+	/** Added beside `actions` on the box. */
 	className?: string;
-	/** Draw the mark alone: the label is then the button's name and its tooltip, not its text. */
+	/** Only the mark is drawn; the label becomes its name and tooltip. */
 	iconOnly?: boolean;
 }
 
 /**
- * @param label what the button is called
- * @param actions everything the toolbar may offer, in order
- * @param look how it is drawn; written on the button by default
+ * @param label the button's name when it offers several actions
+ * @param actions everything it may offer, in order
  */
 export function actionMenu(label: string, actions: Action[], look: Look = {}): ActionMenu {
 	const button = el('button');
@@ -49,20 +47,17 @@ export function actionMenu(label: string, actions: Action[], look: Look = {}): A
 
 	const allowed = (t: TableMeta) => actions.filter(a => t.capabilities.includes(a.needs));
 
-	/** What the button is called. A menu offering one thing is named by that thing; a menu
-	    offering several, by what they have in common. So a role allowed only some of them is
-	    never handed a button promising the rest — the label follows the list, as the list
-	    already follows the role. */
+	/** One action: named by it. Several: by `label`. So a role is never promised what it can't do. */
 	const call = (offered: Action[]) => {
 		const name = offered.length === 1 ? offered[0].text : label;
 
-		if (look.iconOnly) {				// nothing is written on it, so it says its own name
+		if (look.iconOnly) {
 			button.title = name;
 			button.setAttribute('aria-label', name);
 		} else button.replaceChildren(name);
 	};
 
-	call(actions);						// until a screen says which of them it allows
+	call(actions);
 
 	const line = (t: TableMeta) => (a: Action): Option =>
 		({ text: a.text, pick: () => { list.close(); a.run(t); } });
@@ -74,9 +69,9 @@ export function actionMenu(label: string, actions: Action[], look: Look = {}): A
 	const keys = new Map<string, (e: KeyboardEvent) => void>([
 		['ArrowDown', e => { e.preventDefault(); move(1); }],
 		['ArrowUp', e => { e.preventDefault(); move(-1); }],
-		// a native Enter on the button would also fire click and close the list
+		// a native Enter would also fire click, and close the list
 		['Enter', e => { const one = list.current(); if (one) { e.preventDefault(); one.pick(); } }],
-		['Escape', e => { e.stopPropagation(); list.close(); }],	// the peek's Escape must not fire too
+		['Escape', e => { e.stopPropagation(); list.close(); }],	// don't close the panel too
 	]);
 
 	button.addEventListener('click', () => { if (list.isOpen()) list.close(); else show(); });
@@ -87,7 +82,7 @@ export function actionMenu(label: string, actions: Action[], look: Look = {}): A
 
 		table = t;
 
-		list.close();					// what it was offering was the last screen's
+		list.close();
 		call(offered);
 		element.hidden = offered.length === 0;
 	};

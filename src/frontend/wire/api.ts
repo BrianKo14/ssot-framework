@@ -1,8 +1,8 @@
-// All frontend API calls go through here
+// All frontend API calls go through here.
 
-import type { FieldErrors } from '../shared/api.js';
+import type { FieldErrors } from '../../shared/api.js';
 
-/** Remembers the status code (401, 404, etc.) + the error message. */
+/** A refusal: the status code (401, 404, etc.), the message, and the fields it was about. */
 export class ApiError extends Error {
 	constructor(readonly status: number, message: string, readonly fields?: FieldErrors) {
 		super(message);
@@ -17,9 +17,8 @@ const fieldErrors = (raw: unknown): FieldErrors | undefined => {
 	return named.length ? (Object.fromEntries(named) as FieldErrors) : undefined;
 };
 
-/** The request itself, handing back the response rather than reading it — for what does not
- * come back as JSON (an export's file). A refusal is JSON whatever was asked for, so it is
- * read and thrown here, and every caller reports failure the one way. */
+/** The response itself, for what isn't JSON (an exported file). A refusal is always JSON, so it
+ * is thrown here for every caller. */
 export async function fetched(path: string, init?: RequestInit): Promise<Response> {
 	const res = await fetch(path, init);
 
@@ -33,15 +32,12 @@ export async function fetched(path: string, init?: RequestInit): Promise<Respons
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-	// tolerant: a 204 (DELETE) has no body to read
-	return await (await fetched(path, init)).json().catch(() => null) as T;
+	return await (await fetched(path, init)).json().catch(() => null) as T;	// a 204 (DELETE) has no body
 }
 
-// The session cookie is sent automatically, so we don't need to include it in the headers.
-/** @param version the row's version, when the write is meant for the row that was read and for
- * no other: it travels as `If-Match`, and a row that has moved on since refuses it (412).
- * Left out, the write is unconditional — which is what a client knowing nothing of versions
- * still gets, so nothing that worked before stopped working. */
+/** A request with a JSON body. The session cookie goes by itself.
+ * @param version the row's version, sent as `If-Match`: a row that changed since refuses the
+ * write (412). Without it the write is unconditional. */
 export const sending = (method: string, body?: unknown, version?: unknown): RequestInit => {
 	const headers: Record<string, string> = {};
 

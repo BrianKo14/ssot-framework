@@ -1,35 +1,31 @@
 // The picker for ancestor columns (SCOPE 6b): the fields of the tables the screen points at,
-// and of the tables *those* point at, offered as a list you turn on and off.
+// and of the ones *those* point at, ticked on and off.
 //
-// Not a `menu`: that is a list you pick one thing from and it closes, and it closes on the very
-// press that a box being ticked is made of. This is a list you tick several things in, so it is
-// a dialog — the browser's own, which brings Escape, the focus trap and the backdrop with it.
+// A `<dialog>`, not a `menu`: a menu closes on the press that ticks a box, and the browser's
+// dialog brings Escape, the focus trap and the backdrop for free.
 
-import type { ColumnMeta, TableMeta } from '../shared/api.js';
-import { byId, classed, el } from './dom.js';
-import { type Ancestor, ancestorsOf, kinshipOf, reachedName } from './fk.js';
+import type { ColumnMeta, TableMeta } from '../../shared/api.js';
+import { byId, classed, el } from '../kit/dom.js';
+import { type Ancestor, ancestorsOf, kinshipOf, reachedName } from '../model/fk.js';
 
 export interface AncestryPicker {
-	/** Opens it on a screen. @param showing the reached names already on that screen. */
+	/** @param showing the reached names already on that screen */
 	open(t: TableMeta, showing: string[]): void;
 }
 
-const dialog = byId('ancestry') as HTMLDialogElement;
-const groups = byId('ancestry-groups');
-const none = byId('ancestry-none');
-const close = byId('ancestry-close');
-
 /**
- * @param tables every table `_meta` published — an fk onto one it did not is not walked, so a
- * role is never offered the fields of a table it may not read
+ * @param tables every table in `_meta`, so a role is never offered a table it may not read
  * @param toggle what ticking a box does; the screen redraws itself
  */
 export function ancestryPicker(
 	tables: TableMeta[],
 	toggle: (t: TableMeta, a: Ancestor, c: ColumnMeta, on: boolean) => void,
 ): AncestryPicker {
+	const dialog = byId('ancestry') as HTMLDialogElement;
+	const groups = byId('ancestry-groups');
+	const none = byId('ancestry-none');
 
-	/** One field, ticked when the screen is already showing it. */
+	/** One field, ticked if the screen already shows it. */
 	const field = (t: TableMeta, a: Ancestor, showing: string[]) => (c: ColumnMeta) => {
 		const box = el('input');
 
@@ -40,7 +36,7 @@ export function ancestryPicker(
 		return el('li', classed('label', 'field', box, el('span', c.name), el('small', c.type)));
 	};
 
-	/** One ancestor: what it is called, which fk reaches it, and what it holds. */
+	/** One ancestor: its kinship, the fks that reach it, and its fields. */
 	const group = (t: TableMeta, showing: string[]) => (a: Ancestor) => {
 		const path = a.via.map(r => r.name).join(' · ');
 
@@ -58,14 +54,13 @@ export function ancestryPicker(
 		dialog.showModal();
 	};
 
-	// the dialog closes itself on Escape; what it must not do is let the press through to the
-	// window, where it would close the record panel behind it as well
+	// the dialog closes itself on Escape; don't let it reach the window and close the panel too
 	dialog.addEventListener('keydown', e => { if (e.key === 'Escape') e.stopPropagation(); });
 
-	// a press on the backdrop is a press on the dialog itself, and reads as "done"
+	// a press on the backdrop is a press on the dialog itself: "done"
 	dialog.addEventListener('click', e => { if (e.target === dialog) dialog.close(); });
 
-	close.addEventListener('click', () => { dialog.close(); });
+	byId('ancestry-close').addEventListener('click', () => { dialog.close(); });
 
 	return { open };
 }

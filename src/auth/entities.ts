@@ -59,7 +59,7 @@ const authRecords = withRecords(authTypes, {
 	 * Addressed by plain text (entity name + record id) rather than FKs. */
 	change: defineRecord(authTypes, {
 		entity: { type: 'text' },			// the entity's identity, e.g. "ventas.reserva"
-		record: { type: 'text' },			// the pk address, as `crud.ts`'s `addressOf` writes it
+		record: { type: 'text' },			// the pk address, as `api/crud/mount.ts`'s `addressOf` writes it
 		field: { type: 'text' },			// the column that changed
 		version: { type: 'version' },			// what `_version` became with this write
 		was: { type: 'text' },				// what it held before, as the database renders it

@@ -7,7 +7,7 @@ import type { Authenticator } from '../auth/store.js';
 import type { AppConfig } from '../config.js';
 import type { Db } from '../db/postgres.js';
 import { AUTH, gate, login, sessionRouter } from './auth.js';
-import { entityRouter } from './crud.js';
+import { entityRouter } from './crud/index.js';
 import { onError } from './handler.js';
 import { META, metaRouter } from './meta.js';
 import { DUMP, dumpRouter, MONITOR, monitorRouter } from './monitor.js';

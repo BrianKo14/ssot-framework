@@ -2,6 +2,8 @@
 
 // See src/ops/README.md for usage instructions.
 
+import { readdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
 import { authTables } from '../auth/entities.js';
 import { loadConfig } from '../config.js';
 import type { Db } from '../db/postgres.js';
@@ -12,6 +14,7 @@ import {
 } from '../sql/ddl.js';
 import { DEFAULT_SCHEMA, qualified, tableRef } from '../sql/identifier.js';
 import { altered, changes, type Changes, updateSql } from '../sql/migrate.js';
+import { seedSql } from '../sql/seed.js';
 import { run, waitForDb } from './cli.js';
 
 
@@ -28,6 +31,7 @@ type Options = Record<typeof OPTION_NAMES[number], boolean>;
 // Documentation
 const CREATE_USAGE = 'usage: npm run db:create [-- --apply]';
 const UPDATE_USAGE = 'usage: npm run db:update [-- --drop] [-- --retype] [-- --apply]';
+const SEED_USAGE = 'usage: npm run db:seed [-- --apply]';
 
 /** Reads the options off the command line, refusing anything it does not know. */
 function options(argv: string[], usage: string, allowed: (keyof Options)[]): Options {
@@ -46,19 +50,39 @@ const allTables = (tables: TableInfo[]): TableInfo[] => [...authTables, ...table
 
 // --- Creating ---
 
-async function create(tables: TableInfo[]): Promise<void> {
-	const sql = schemaSql(allTables(tables));
-
-	if (!options(process.argv.slice(2), CREATE_USAGE, ['apply']).apply) { console.log(sql); return; }
+/** Prints a script, or with `--apply` runs it on the configured database.
+ * Atomic transaction.
+ * 
+ * @param done what to say once it ran */
+async function printOrApply(sql: string, argv: string[], usage: string, done: string): Promise<void> {
+	if (!options(argv, usage, ['apply']).apply) { console.log(sql); return; }
 
 	const db = await waitForDb(loadConfig().databaseUrl);
 
 	try {
 		await db.query(sql);
-		console.log('schema created');
+		console.log(done);
 	} finally {
 		await db.close();
 	}
+}
+
+const create = (tables: TableInfo[], argv: string[]): Promise<void> =>
+	printOrApply(schemaSql(allTables(tables)), argv, CREATE_USAGE, 'schema created');
+
+
+// --- Seeding ---
+
+/** Loads every `<entity>.tab` file in `dir` into the table of that entity. */
+async function seed(tables: TableInfo[], dir: string, argv: string[]): Promise<void> {
+	const files = (await readdir(dir)).filter(name => name.endsWith('.tab')).sort();
+
+	const sources = await Promise.all(files.map(async name =>
+		({ entity: name.slice(0, -'.tab'.length), text: await readFile(path.join(dir, name), 'utf8') })));
+
+	const sql = seedSql(tables, sources, `sample data from ${dir}`);
+
+	await printOrApply(sql, argv, SEED_USAGE, `${sources.length} files loaded from ${dir}`);
 }
 
 
@@ -150,8 +174,8 @@ function report(c: Changes): void {
 	console.log(done.length ? done.join(', ') : 'nothing to do');
 }
 
-async function update(tables: TableInfo[]): Promise<void> {
-	const opts = options(process.argv.slice(2), UPDATE_USAGE, ['apply', 'drop', 'retype']);
+async function update(tables: TableInfo[], argv: string[]): Promise<void> {
+	const opts = options(argv, UPDATE_USAGE, ['apply', 'drop', 'retype']);
 	const all = allTables(tables);
 	const db = await waitForDb(loadConfig().databaseUrl);
 
@@ -183,9 +207,23 @@ async function update(tables: TableInfo[]): Promise<void> {
 
 
 /** Print the schema of a system, or apply it to the configured database.
- * @param tables the application's own tables, as `tablesFrom` built them */
-export const schemaCli = (tables: TableInfo[]): void => run(() => create(tables));
+ * 
+ * @param tables the application's own tables, as `tablesFrom` built them
+ * @param argv the command's options */
+export const schemaCli = (tables: TableInfo[], argv = process.argv.slice(2)): void =>
+	run(() => create(tables, argv));
 
 /** Print what the configured database is missing of a system, or add it.
- * @param tables the application's own tables, as `tablesFrom` built them */
-export const updateCli = (tables: TableInfo[]): void => run(() => update(tables));
+ * 
+ * @param tables the application's own tables, as `tablesFrom` built them
+ * @param argv the command's options */
+export const updateCli = (tables: TableInfo[], argv = process.argv.slice(2)): void =>
+	run(() => update(tables, argv));
+
+/** Print the inserts of a system's sample data, or load it into the configured database.
+ * 
+ * @param tables the application's own tables, as `tablesFrom` built them
+ * @param dir a folder of `<entity>.tab` files, one per entity it fills
+ * @param argv the command's options */
+export const seedCli = (tables: TableInfo[], dir: string, argv = process.argv.slice(2)): void =>
+	run(() => seed(tables, dir, argv));

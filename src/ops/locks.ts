@@ -98,9 +98,13 @@ async function release(db: Db, tables: TableInfo[], user?: string): Promise<numb
 	return freed;
 }
 
-export function locksCli(tables: TableInfo[]): void {
+/** List the claims standing on a system's records, or with `--release` clear them.
+ * 
+ * @param tables the application's own tables, as `tablesFrom` built them
+ * @param argv the command's options */
+export function locksCli(tables: TableInfo[], argv = process.argv.slice(2)): void {
 	run(async () => {
-		const opts = options(process.argv.slice(2));
+		const opts = options(argv);
 
 		if (opts.release && opts.user === undefined && opts.entity === undefined)
 			throw new Error(`--release needs --user or --entity: it will not clear every claim at once\n${USAGE}`);

@@ -5,17 +5,15 @@ import { forgetting, logging, undoing, UNDO } from '../../auth/changes.js';
 import { HttpError } from '../../errors.js';
 import type { ColumnInfo } from '../../schema/model.js';
 import { LOCK, STAMP } from '../../schema/reserved.js';
-import { asRecord, checkedValues, namedColumns } from '../../schema/values.js';
+import { asRecord, checkedValues, inserted, namedColumns } from '../../schema/values.js';
 import { equalities, where } from '../../sql/filter.js';
-import { columnList, q } from '../../sql/identifier.js';
+import { insertSql } from '../../sql/insert.js';
+import { q } from '../../sql/identifier.js';
 import { wrap } from '../handler.js';
 import { deletableBy, readableBy } from '../permission.js';
 import {
 	askedField, holder, type Mount, preconditions, presentedVersion, refuseUnmatched, routes, unheld,
 } from './mount.js';
-
-/** Required on insert = not nullable AND without a default. */
-const requiredOnInsert = (c: ColumnInfo) => !c.nullable && c.defaultSql === null;
 
 export function writeRouter(m: Mount): Router {
 	const { db, t, table, cols, pkCols, byPk, updatable } = m;
@@ -74,20 +72,9 @@ export function writeRouter(m: Mount): Router {
 		// INSERT INTO table (col1, col2, ...) VALUES ($1, $2, ...) RETURNING *
 		.post('/', wrap(async (req, res) => {
 			const body = m.withInherited(req, asRecord(req.body));			    // under a master, its key comes from the path
-			namedColumns(t.byName, body);						    // refuse columns the schema does not declare
+			const { given, values } = inserted(t, body);
 
-			const given = t.columns.filter(c => c.name in body || requiredOnInsert(c)); // columns the body provided + required ones the body omitted
-
-			if (!given.length) throw new HttpError(400, 'no columns provided');
-
-			const values = checkedValues(given, body, true);
-
-			const ph = given.map((_, i) => `$${i + 1}`).join(', '); 	            // build "$1, $2, ..." placeholders for the query
-
-			const rows = await db.query(
-				`insert into ${table} (${columnList(given)}) values (${ph}) returning ${cols}`,
-				given.map(c => values[c.name])
-			);
+			const rows = await db.query(`${insertSql(t, given)} returning ${cols}`, given.map(c => values[c.name]));
 
 			res.status(201).json(await m.wire(rows[0]));			            // return the newly created row, including the primary key
 		}))

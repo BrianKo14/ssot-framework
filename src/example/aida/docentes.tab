@@ -1,0 +1,6 @@
+docente|apellido|nombres|cargo|email|email_alternativo|jefe
+dlopez|López|Daniela|PAS|dlopez@example.edu||
+mgarcia|García|Martín|JTP|mgarcia@example.edu||dlopez
+lfernandez|Fernández|Lucía|AY1|lfernandez@example.edu|lucia.f@example.com|dlopez
+rsosa|Sosa|Ramiro|AY2|rsosa@example.edu||mgarcia
+vmartinez|Martínez|Valeria|PAD|vmartinez@example.edu||

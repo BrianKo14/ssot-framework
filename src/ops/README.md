@@ -1,6 +1,6 @@
 # Ops CLI
 
-Command-line tools for the framework: creating the database, and managing users.
+Command-line tools for the framework: creating the database, loading its sample data, and managing users.
 
 Everything here talks to the database directly.
 
@@ -16,16 +16,25 @@ npm run db:create -- --apply   # run it against DATABASE_URL
 `--apply` is optional. If you don't pass it, the SQL is printed to stdout. If you do, it is applied to the database specified in `DATABASE_URL` (or the default in `.env`).
 
 `npm run db:reset` is the whole cycle for development: it destroys the Postgres
-volume, starts a fresh one and applies the schema to it. **It deletes
-everything**, users included, so the next step is always creating an admin
-again:
+volume, starts a fresh one, applies the schema to it and loads the sample data
+(below). **It deletes everything**, users included, so the next step is always
+creating an admin again:
 
 ```bash
 npm run db:reset
 AUTH_PASSWORD='yourpassword' npm run auth:user -- brian --role admin
 ```
 
-The database that comes out is empty.
+## Loading the sample data
+
+`npm run db:seed` writes the inserts for the example's sample data, one `.tab` file
+per entity in `src/example/aida`, named after the entity (`docentes.tab`,
+`evaluacion.preguntas.tab`).
+
+```
+npm run db:seed                # print it
+npm run db:seed -- --apply     # load it into DATABASE_URL
+```
 
 ## Updating the database
 
@@ -105,7 +114,8 @@ AUTH_PASSWORD='yourpassword' npm run auth:user -- brian --role admin --email bri
 ### Add users with narrower roles
 
 ```bash
-AUTH_PASSWORD='yourpassword' npm run auth:user -- recepcion --role recepcion
+AUTH_PASSWORD='yourpassword' npm run auth:user -- dlopez --role docente
+AUTH_PASSWORD='yourpassword' npm run auth:user -- jacosta --role alumno
 ```
 
 ## Managing record locks
@@ -118,13 +128,13 @@ the way out.
 ```bash
 npm run locks                                  # every claim: entity, record, holder
 npm run locks -- --user ada                    # only ada's
-npm run locks -- --entity cliente              # only this screen's
+npm run locks -- --entity clases               # only this screen's
 npm run locks -- --release --user ada          # let ada's go
-npm run locks -- --release --entity cliente    # let this screen's go
+npm run locks -- --release --entity clases     # let this screen's go
 ```
 
 A record is named the way the address names it — the pk values joined with `/`,
-so `ventas.reserva 2026-09-12/1` is the row `/ventas.reserva/2026-09-12/1`.
+so `clases 2026c1/bd/2` is the row `/clases/2026c1/bd/2`.
 
 `--release` needs `--user` or `--entity`. Clearing every claim in the database in
 one command is not offered, because a claim is somebody's unfinished work.
@@ -153,7 +163,7 @@ TOKEN=$(curl -s -X POST localhost:3000/api/_auth \
 ### Make authenticated requests
 
 ```bash
-curl localhost:3000/api/ventas.reserva -H "Authorization: Bearer $TOKEN"
+curl localhost:3000/api/clases -H "Authorization: Bearer $TOKEN"
 ```
 
 ### Check who you are

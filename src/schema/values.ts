@@ -2,7 +2,7 @@
 
 import { HttpError } from '../errors.js';
 import type { FieldErrors } from '../shared/api.js';
-import type { ColumnInfo, Columns } from './model.js';
+import type { ColumnInfo, Columns, TableInfo } from './model.js';
 
 /** Takes the keys the client sent and returns the matching schema columns, in the order the client sent them.
  * Refuses any name the schema doesn't declare. */
@@ -77,6 +77,24 @@ export function checkedValues(
 	refuseAll(failed.map(([, message]) => message), Object.fromEntries(failed));
 
 	return values;
+}
+
+/** Required on insert = not nullable AND without a default. */
+const requiredOnInsert = (c: ColumnInfo) => !c.nullable && c.defaultSql === null;
+
+/** Checks new row before an insert into the database.
+ *
+ * @param raw the row's values, keyed by column name; an absent key leaves the column to its default
+ *
+ * @returns the columns to insert, in table order, and their values to bind */
+export function inserted(t: TableInfo, raw: Record<string, unknown>): { given: ColumnInfo[]; values: Record<string, unknown> } {
+	namedColumns(t.byName, raw);
+
+	const given = t.columns.filter(c => c.name in raw || requiredOnInsert(c));
+
+	if (!given.length) throw new HttpError(400, 'no columns provided');
+
+	return { given, values: checkedValues(given, raw, true) };
 }
 
 /** A row as the database returned it -> the values to send on the wire.

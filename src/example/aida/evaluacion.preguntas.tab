@@ -1,0 +1,5 @@
+periodo|materia|orden|pregunta|formulacion|aclaraciones|tipo_respuesta
+2026c1|bd|1|1|¿Qué es una clave primaria?||
+2026c1|bd|1|2|¿Una relación puede tener filas repetidas?|En el modelo relacional, no en una tabla de SQL.|opcion
+2026c1|bd|2|1|¿Qué operación combina dos relaciones por sus atributos comunes?||opcion
+2026c1|isw2|2|1|¿Qué se gana nombrando cada concepto una sola vez?||

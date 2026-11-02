@@ -7,7 +7,7 @@ one system definition, instead of writing SQL and endpoints by hand.
 
 This project depends on [`system-definition`](https://github.com/BrianKo14/system-definition),
 a descriptive vocabulary layer. `package.json` lists the public npm
-package (`^0.1.3`), but the latest version exists on a **fork** not yet published to npm.
+package (`^0.3.0`), but the latest version exists on a **fork** not yet published to npm.
 
 Until that's published, `npm install` leads to a broken installation.
 
@@ -69,15 +69,19 @@ INSERT INTO "users" ("id", "name", "role") VALUES (1, 'brian', 'admin');
 
 Whoever may see the *Monitor* also gets a *SQL dump* screen under "Sistema".
 
-### Start the database
+### Start the example
+
+The example system is `aida`, the student system that ships with `system-definition`
+(`system-definition/examples`), with its sample rows in `src/example/aida/*.tab`.
 
 ```bash
 npm run build
-npm run db:reset
+npm run db:reset              # recreates the database and loads src/example/aida
 npm run start
 ```
 
-Then create the admin user using the CLI (see `src/ops/README.md`):
+Then create users with the CLI (see `src/ops/README.md`). aida's roles are `admin`,
+`docente` and `alumno`:
 
 ```bash
 AUTH_PASSWORD='yourpassword' npm run auth:user -- brian --role admin

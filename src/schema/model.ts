@@ -1,16 +1,20 @@
 // Model for the schema generator: what a table, column, reference, etc., is
 
-import type { DefaultDef } from 'system-definition';
+import type { DefaultDef, RoutineKind, RoutineLanguage, TriggerEvent, TriggerLevel, TriggerTiming } from 'system-definition';
 import type { Capability } from '../shared/api.js';
 import type { TypeHandler } from '../types/handler.js';
 
 
-export interface ColumnInfo {
-	name: string;
+/** Anything declared with one of the system's types: a column, a routine's param or result. */
+export interface Typed {
 	typeName: string;
+	type: TypeHandler<any>;
+}
+
+export interface ColumnInfo extends Typed {
+	name: string;
 	nullable: boolean;
 	isName: boolean;
-	type: TypeHandler<any>;
 	defaultValue: DefaultDef<unknown> | null;
 	defaultSql: string | null;
 }
@@ -51,4 +55,33 @@ export interface TableInfo {
 	details: ReferenceInfo[];		// fks *into* this table from tables that are details of it
 	referencedBy: ReferenceInfo[];		// every fk *into* this table, detail or not
 	access: Access;				// who may do what here; see `schema/access.ts`
+	triggers: TriggerInfo[];		// runs when its rows change, in declaration order
+}
+
+
+/** One param of a routine, in declaration order. */
+export interface ParamInfo extends Typed {
+	name: string;
+}
+
+/** The routine (procedure, function) that a trigger runs, with its types resolved. */
+export interface RoutineInfo {
+	routine: string;			// schema + name
+	schema: string;				
+	name: string;				
+	kind: RoutineKind;
+	params: ParamInfo[];
+	returns: Typed | null;			
+	language: RoutineLanguage;
+	body: string;				// text in `language`
+}
+
+/** One trigger of a table + the routine it runs resolved. */
+export interface TriggerInfo {
+	name: string;
+	table: TableInfo;
+	timing: TriggerTiming;
+	events: TriggerEvent[];			// distinct, in `TRIGGER_EVENTS` order
+	level: TriggerLevel;
+	routine: RoutineInfo;
 }

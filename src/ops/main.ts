@@ -4,7 +4,7 @@
 //
 // See src/ops/README.md for usage instructions.
 
-import type { TableInfo } from '../schema/model.js';
+import type { RoutineInfo, TableInfo } from '../schema/model.js';
 import { type Grants, serve } from '../serve.js';
 import { run } from './cli.js';
 import { locksCli } from './locks.js';
@@ -13,6 +13,8 @@ import { schemaCli, seedCli, updateCli } from './schema.js';
 export interface System {
 	/** As `tablesFrom` built them */
 	tables: TableInfo[];
+	/** As `routinesFrom` built them */
+	routines?: RoutineInfo[];
 	grants?: Grants;
 	/** A folder of `<entity>.tab` files, for `seed` */
 	seed?: string;
@@ -24,10 +26,10 @@ const COMMANDS: Record<string, (system: System, argv: string[]) => void> = {
 	start: (s) => run(() => serve(s.tables, s.grants)),
 
 	/** Creates the whole database, or prints the SQL if you leave out `--apply`. */
-	schema: (s, argv) => schemaCli(s.tables, argv),
+	schema: (s, argv) => schemaCli(s.tables, s.routines ?? [], argv),
 
 	/** Changes the database to match the definition, if using `--drop` and `--retype`. */
-	update: (s, argv) => updateCli(s.tables, argv),
+	update: (s, argv) => updateCli(s.tables, s.routines ?? [], argv),
 
 	/** Checks the sample rows and loads them. */
 	seed: (s, argv) => {

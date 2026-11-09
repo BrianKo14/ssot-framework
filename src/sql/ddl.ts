@@ -1,6 +1,7 @@
 // The schema generator
 
-import type { ColumnInfo, TableInfo } from '../schema/model.js';
+import type { RoutineKind } from 'system-definition';
+import type { ColumnInfo, RoutineInfo, TableInfo, TriggerInfo, Typed } from '../schema/model.js';
 import { stored } from '../schema/reserved.js';
 import {
 	canonicalType, checkedName, checkedSchema, columnList, DEFAULT_SCHEMA, generatedName, q, qualified,
@@ -11,7 +12,8 @@ import {
 // --- OBJECTS FOR COMPARISON ---
 // `Target`s (what the definition asks for) against `Held` (what the database has)
 
-export type ObjectKind = 'schema' | 'domain' | 'table' | 'column' | 'constraint' | 'index';
+export type ObjectKind = 'schema' | 'domain' | 'table' | 'column' | 'constraint' | 'index'
+	| 'function' | 'procedure' | 'trigger';
 
 /** Object kind + qualified name. */
 export const objectKey = (kind: ObjectKind, ...parts: string[]): string =>
@@ -25,6 +27,8 @@ export interface Target {
 	sql: string;
 	/** Shape of the object, to be used in comparisons. */
 	shape?: string;
+	/** Code in functions, procedures and triggers. */
+	source?: string;
 	/** Things bundled with it, e.g. a table's columns. */
 	parts?: Target[];
 	/** This is the table.
@@ -38,6 +42,8 @@ interface HeldBase {
 	key: string;
 	schema: string;
 	name: string;
+	/** The keys of the objects it depends on: it cannot stay while one of them leaves. */
+	dependsOn: string[];
 }
 
 export interface SchemaHeld extends HeldBase { kind: 'schema' }
@@ -47,8 +53,6 @@ export interface ColumnHeld extends HeldBase {
 	kind: 'column';
 	/** The table where it lives. */
 	in: string;
-	/** The domain type it depends on; else null. */
-	dependsOn: string | null;
 	/** The type it has and whether it admits null: the halves of its shape,
 	 * so a change can be told from a rebuild. */
 	type: string;
@@ -62,8 +66,6 @@ export interface ConstraintHeld extends HeldBase {
 	shape: string;
 	/** Its columns, in order. */
 	columns: string[];
-	/** If an FK, the key it references; else null. */
-	dependsOn: string | null;
 }
 export interface IndexHeld extends HeldBase {
 	kind: 'index';
@@ -74,11 +76,29 @@ export interface IndexHeld extends HeldBase {
 	/** Its columns, in order. */
 	columns: string[];
 }
+interface RoutineHeldOf<K extends 'function' | 'procedure'> extends HeldBase {
+	kind: K;
+	/** Its parameters and return type. If these change, the routine is deleted and recreated. */
+	shape: string;
+	/** Its language and code. If only these change, the routine is updated in place. */
+	source: string;
+}
+export type FunctionHeld = RoutineHeldOf<'function'>;
+export type ProcedureHeld = RoutineHeldOf<'procedure'>;
+export interface TriggerHeld extends HeldBase {
+	kind: 'trigger';
+	/** The table where it is. */
+	in: string;
+	/** Trigger's definition.
+	 * E.g. `before insert or update on "public"."docentes" for each row execute function "public"."email_en_minusculas"()`. */
+	source: string;
+}
 
 /** One database object that is already there, mirror of `Target`.
  * To be used in comparisons and drop statements.
  * Which fields apply depends on `kind`. */
-export type Held = SchemaHeld | TableHeld | DomainHeld | ColumnHeld | ConstraintHeld | IndexHeld;
+export type Held = SchemaHeld | TableHeld | DomainHeld | ColumnHeld | ConstraintHeld | IndexHeld
+	| FunctionHeld | ProcedureHeld | TriggerHeld;
 
 /** List of SQL commands -> SQL (text) script. */
 export const script = (statements: string[], header: string): string =>
@@ -113,19 +133,23 @@ const SHADOWED = new Set([
 ]);
 
 /** Collects all the distinct types used in the schema and their storage types. */
-function storages(tables: TableInfo[]): Map<string, string> {
+function storages(tables: TableInfo[], routines: RoutineInfo[]): Map<string, string> {
 	const byName = new Map<string, string>();
 
-	for (const t of tables)
-		for (const c of t.columns) {
-			const seen = byName.get(c.typeName);
+	const typed: Typed[] = [
+		...tables.flatMap(t => t.columns),
+		...routines.flatMap(r => [...r.params, ...r.returns === null ? [] : [r.returns]]),
+	];
 
-			// Refuse to store the same type in two different ways
-			if (seen !== undefined && seen !== c.type.sqlType)
-				throw new Error(`type "${c.typeName}" is stored as both ${seen} and ${c.type.sqlType}`);
+	for (const c of typed) {
+		const seen = byName.get(c.typeName);
 
-			byName.set(c.typeName, storageType(c.type.sqlType));
-		}
+		// Refuse to store the same type in two different ways
+		if (seen !== undefined && seen !== c.type.sqlType)
+			throw new Error(`type "${c.typeName}" is stored as both ${seen} and ${c.type.sqlType}`);
+
+		byName.set(c.typeName, storageType(c.type.sqlType));
+	}
 
 	return byName;
 }
@@ -197,17 +221,18 @@ const keyConstraints = (t: TableInfo, taken: Set<string>): Constraint[] => [
 
 // --- TABLES AND COLUMNS ---
 
-/** Is this column's type stored in a domain of its own? */
-export const hasDomain = (c: ColumnInfo): boolean => needsDomain(c.typeName, c.type.sqlType);
+/** Is this type stored in a domain of its own? */
+export const hasDomain = (c: Typed): boolean => needsDomain(c.typeName, c.type.sqlType);
 
-/** The type a column is declared with. */
-const columnType = (c: ColumnInfo): string =>
+/** The type a column (or a param) is declared with. */
+const columnType = (c: Typed): string =>
 	hasDomain(c) ? domainRef(c.typeName) : storageType(c.type.sqlType);
 
 /** The same type as the catalogue reports it: a domain by its name, a plain type in
- * Postgres's own spelling. Only for comparing — what gets written is `columnType`. */
-export const comparedType = (c: ColumnInfo): string =>
-	hasDomain(c) ? domainRef(c.typeName) : canonicalType(c.type.sqlType);
+ * Postgres's own spelling. Only for comparing — what gets written is `columnType`.
+ * @param modified false for routines' params and results */
+export const comparedType = (c: Typed, modified = true): string =>
+	hasDomain(c) ? domainRef(c.typeName) : canonicalType(c.type.sqlType, modified);
 
 /** e.g. `"nombre" varchar(100) not null default 'sin nombre'` */
 const columnDefinition = (c: ColumnInfo): string =>
@@ -270,6 +295,77 @@ const indexTargets = (t: TableInfo, taken: Set<string>): Target[] =>
 			};
 		});
 
+		
+
+// --- ROUTINES AND TRIGGERS ---
+
+/** The SQL keyword for each kind of routine. */
+const ROUTINE_KEYWORD: Readonly<Record<RoutineKind, 'function' | 'procedure'>> = {
+	function: 'function',
+	procedure: 'procedure',
+	trigger: 'function',		// A trigger is a function that returns `trigger`
+};
+
+const TRIGGER_RESULT = 'trigger';
+
+/** The routine's full name with its schema. */
+const routineRef = (r: RoutineInfo): string => qualified(r.schema, r.name);
+
+/** A routine's params and result, e.g. `("periodo" text, "materia" text) returns integer`:
+ * `create or replace` can't change these, so if they change the routine is rebuilt.
+ * 
+ * @param params name and type of each param, in order
+ * @param returns the result's type, or null for a procedure */
+export const routineSignature = (params: [string, string][], returns: string | null): string =>
+	`(${params.map(([name, type]) => `${q(name)} ${type}`).join(', ')})`
+	+ (returns === null ? '' : ` returns ${returns}`);
+
+export const routineSource = (language: string, body: string): string => `language ${language}\n${body}`;
+export const triggerBody = (timing: string, events: string[], table: string, level: string, routine: string): string =>
+	`${timing} ${events.join(' or ')} on ${table} for each ${level} execute function ${routine}()`;
+
+/** A dollar-quoted string whose tag does not occur in the text, so the text cannot close it.
+ * The `$` appended is the closing tag's first character: a text ending in `$body` would
+ * otherwise close it one character early. */
+
+/** Wraps text in `$tag$...$tag$`, using a tag that doesn't appear in the text. */
+export function dollarQuoted(text: string): string {
+	let tag = 'body';
+
+	for (let i = 1; `${text}$`.includes(`$${tag}$`); i++) tag = `body${i}`;
+
+	return `$${tag}$${text}$${tag}$`;
+}
+
+/** Routine's signature (params, returns) with types as in `type`. */
+const signatureOf = (r: RoutineInfo, type: (t: Typed) => string): string =>
+	routineSignature(r.params.map(p => [checkedName(p.name, 'param'), type(p)]),
+		r.kind === 'trigger' ? TRIGGER_RESULT : r.returns === null ? null : type(r.returns));
+
+/** Builds the SQL to create a routine + gives shape + source. */
+function routineTarget(r: RoutineInfo): Target {
+	const keyword = ROUTINE_KEYWORD[r.kind];
+
+	return {
+		key: objectKey(keyword, r.schema, r.name),
+		sql: `create or replace ${keyword} ${routineRef(r)}${signatureOf(r, columnType)} `
+			+ `language ${r.language} as ${dollarQuoted(r.body)}`,
+		shape: signatureOf(r, t => comparedType(t, false)),
+		source: routineSource(r.language, r.body),
+	};
+}
+
+/** Builds the SQL to create a trigger + gives source. */
+function triggerTarget(tr: TriggerInfo): Target {
+	const body = triggerBody(tr.timing, tr.events, tableRef(tr.table), tr.level, routineRef(tr.routine));
+
+	return {
+		key: objectKey('trigger', tr.table.schema, tr.table.table, tr.name),
+		sql: `create or replace trigger ${q(tr.name)} ${body}`,
+		source: body,
+	};
+}
+
 
 // --- THE SCHEMA ---
 
@@ -292,44 +388,54 @@ function takenBySchema(tables: TableInfo[]): Map<string, Set<string>> {
 }
 
 /** Returns everything that needs to be created in the correct order. */
-export function targets(tables: TableInfo[]): Target[] {
+export function targets(tables: TableInfo[], routines: RoutineInfo[] = []): Target[] {
 	const taken = takenBySchema(tables);
 
 	/** The names already used in the schema this table lives in. */
 	const namesIn = (t: TableInfo): Set<string> => taken.get(t.schema)!;
 
+	const triggers = tables.flatMap(t => t.triggers);
+	const asked = [...new Set([...routines, ...triggers.map(tr => tr.routine)])];
+	const schemas = new Set([...taken.keys(), ...asked.map(r => checkedSchema(r.schema))]);
+
 	return [
 		// 1. Schemas
-		...schemaTargets([...taken.keys()]),
+		...schemaTargets([...schemas]),
 		// 2. Domains
-		...domainTargets(storages(tables)),
+		...domainTargets(storages(tables, asked)),
 		// 3. Tables
 		...tables.map(t => tableTarget(t, namesIn(t))),
 		// 4. Foreign keys
 		...tables.flatMap(t => foreignKeyTargets(t, namesIn(t))),
 		// 5. Indexes
 		...tables.flatMap(t => indexTargets(t, namesIn(t))),
+		// 6. Routines
+		...asked.map(routineTarget),
+		// 7. Triggers
+		...triggers.map(triggerTarget),
 	];
 }
 
 /** The SQL script that creates the schema for all the tables. */
-export const schemaSql = (tables: TableInfo[]): string =>
-	script(targets(tables).map(t => t.sql),
+export const schemaSql = (tables: TableInfo[], routines: RoutineInfo[] = []): string =>
+	script(targets(tables, routines).map(t => t.sql),
 		'Generated from the system definition. Edit the definition, not this.');
 
 
 
 // --- DROPPING OBJECTS ---
 
-function inTable(h: ColumnHeld | ConstraintHeld | IndexHeld): string {
+function inTable(h: ColumnHeld | ConstraintHeld | IndexHeld | TriggerHeld): string {
 	return qualified(h.schema, h.in);
 }
 
 function dropOne(h: Held): string {
 	switch (h.kind) {
+		case 'trigger': return `drop trigger ${q(h.name)} on ${inTable(h)}`;
 		case 'constraint': return `alter table ${inTable(h)} drop constraint ${q(h.name)}`;
 		case 'column': return `alter table ${inTable(h)} drop column ${q(h.name)}`;
 		case 'index': return `drop index ${qualified(h.schema, h.name)}`;
+		case 'function': case 'procedure': return `drop ${h.kind} ${qualified(h.schema, h.name)}`;
 		default: throw new Error(`${h.key} does not leave on its own`);
 	}
 }
@@ -355,17 +461,21 @@ export function dropStatements(removals: Held[], notes: ReadonlyMap<string, stri
 	const constraints = ofKind('constraint');
 
 	return [
-		// 1. Constraints (foreign keys)
+		// 1. Triggers: nothing depends on one, and one depends on its table and its routine
+		...alone(ofKind('trigger')),
+		// 2. Constraints (foreign keys)
 		...alone(constraints.filter(h => isForeignKey(h.shape))),
-		// 2. Indexes
+		// 3. Indexes
 		...alone(ofKind('index')),
-		// 3. Other constraints (non-foreign key)
+		// 4. Other constraints (non-foreign key)
 		...alone(constraints.filter(h => !isForeignKey(h.shape))),
-		// 4. Columns
+		// 5. Columns
 		...alone(ofKind('column')),
-		// 5. Tables
+		// 6. Tables
 		...together('drop table', ofKind('table')),
-		// 6. Domains
+		// 7. Routines
+		...alone([...ofKind('function'), ...ofKind('procedure')]),
+		// 8. Domains
 		...together('drop domain', ofKind('domain')),
 	];
 }

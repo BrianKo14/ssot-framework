@@ -2,8 +2,9 @@
 // Used by updates to check what's already there
 
 import {
-	type ColumnHeld, type ConstraintHeld, type DomainHeld, fkBody, type Held, indexBody, type IndexHeld,
-	objectKey, type ObjectKind, pkBody, type SchemaHeld, type TableHeld, ukBody,
+	type ColumnHeld, type ConstraintHeld, type DomainHeld, fkBody, type FunctionHeld, type Held, indexBody, type IndexHeld,
+	objectKey, type ObjectKind, pkBody, type ProcedureHeld, routineSignature, routineSource, type SchemaHeld,
+	type TableHeld, triggerBody, type TriggerHeld, ukBody,
 } from './ddl.js';
 import { nameList, qualified } from './identifier.js';
 
@@ -44,15 +45,19 @@ interface DomainRow extends RowBase {
 
 type TableRow = RowBase;
 
-interface ColumnRow extends InTableRow {
+/** A type something is declared with, as `pg_type` has it. */
+interface TypeRow {
 	/** The type it is stored as, in Postgres's own spelling. */
 	type: string;
-	/** Whether it admits no null. */
-	notNull: Flag;
-	/** The column's own type: `d` when it is a domain, and then `typeSchema`/`typeName` name it. */
+	/** Its own type: `d` when it is a domain, and then `typeSchema`/`typeName` name it. */
 	typeKind: TypeKind;
 	typeSchema: string;
 	typeName: string;
+}
+
+interface ColumnRow extends InTableRow, TypeRow {
+	/** Whether it admits no null. */
+	notNull: Flag;
 }
 
 /** A primary or unique key. */
@@ -84,9 +89,26 @@ interface IndexRow extends InTableRow {
 	cols: string;
 }
 
+interface RoutineRow extends RowBase {
+	language: string;
+	/** Code, written between the dollar quotes. */
+	body: string;
+	/** Params in order, as a JSON array of `{name, ...TypeRow}`. */
+	params: string;
+	/** Result, as a JSON `TypeRow` (or null for a procedure). */
+	returns: string | null;
+}
+
+interface TriggerRow extends InTableRow {
+	/** `pg_trigger.tgtype` (the bits of `TRIGGER_BITS`, as text). */
+	type: string;
+	routineSchema: string;
+	routineName: string;
+}
+
 /** One row from a catalogue query, mirror of `Held`.
  * Which fields it has depends on which query returned it. */
-export type CatalogRow = SchemaRow | DomainRow | TableRow | ColumnRow | ConstraintRow | IndexRow;
+export type CatalogRow = SchemaRow | DomainRow | TableRow | ColumnRow | ConstraintRow | IndexRow | RoutineRow | TriggerRow;
 
 
 // --- QUERIES ---
@@ -116,10 +138,69 @@ const columnsOf = (json: string): string[] => JSON.parse(json) as string[];
 /** A column list, quoted and joined the way the generator writes one. */
 const listOf = (json: string): string => nameList(columnsOf(json));
 
-/** A columna's type.
+/** The type a column or a param is declared with.
  * The domain it is typed by, or else Postgres's own spelling of the plain type. */
-const columnType = (row: ColumnRow): string =>
+const typeOf = (row: TypeRow): string =>
 	row.typeKind === 'd' ? qualified(row.typeSchema, row.typeName) : row.type;
+
+/** The type of a domain. (None for a plain type.) */
+const domainOf = (row: TypeRow): string[] =>
+	row.typeKind === 'd' ? [objectKey('domain', row.typeSchema, row.typeName)] : [];
+
+/** The fields of a `TypeRow`, as a `json_build_object` list.
+ * Reused for both a routine's params and return type. */
+const TYPE_JSON = `'type', format_type(t.oid, null), 'typeKind', t.typtype,
+	'typeSchema', tn.nspname, 'typeName', t.typname`;
+
+/** SQL that reads functions (`'f'`) or procedures (`'p'`) + their params and return types.
+ * Skips extension-owned routines, which are not the definition's. */
+const routineQuery = (prokind: 'f' | 'p'): string =>
+	`select n.nspname as schema, p.proname as name, l.lanname as language, p.prosrc as body,
+			coalesce((select json_agg(json_build_object('name', p.proargnames[u.ord::int], ${TYPE_JSON}) order by u.ord)
+				from unnest(p.proargtypes::oid[]) with ordinality as u(oid, ord)
+				join pg_type t on t.oid = u.oid
+				join pg_namespace tn on tn.oid = t.typnamespace), '[]') as params,
+			(select json_build_object(${TYPE_JSON})
+				from pg_type t join pg_namespace tn on tn.oid = t.typnamespace
+				where p.prokind = 'f' and t.oid = p.prorettype) as returns
+		from pg_proc p
+		join pg_namespace n on n.oid = p.pronamespace
+		join pg_language l on l.oid = p.prolang
+		where p.prokind = '${prokind}' and ${IN_SCHEMAS}
+			and not exists (
+				select 1 from pg_depend d
+				where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')`;
+
+/** `routineQuery` -> `Held` of a function or procedure. */
+function routineHeld<K extends 'function' | 'procedure'>(kind: K, row: RoutineRow) {
+	const params = JSON.parse(row.params) as (TypeRow & { name: string })[];
+	const returns = row.returns === null ? null : JSON.parse(row.returns) as TypeRow;
+	const typed = [...params, ...returns === null ? [] : [returns]];
+
+	return {
+		key: objectKey(kind, row.schema, row.name), kind,
+		schema: row.schema, name: row.name,
+		shape: routineSignature(params.map(p => [p.name, typeOf(p)]), returns === null ? null : typeOf(returns)),
+		source: routineSource(row.language, row.body),
+		dependsOn: [...new Set(typed.flatMap(domainOf))],
+	};
+}
+
+/** `pg_trigger.tgtype`, bit by bit, in the order `triggerBody` writes events. */
+const TRIGGER_BITS = { row: 1, before: 2, insert: 4, update: 16, delete: 8, truncate: 32, instead: 64 } as const;
+const EVENT_BITS = ['insert', 'update', 'delete', 'truncate'] as const;
+
+/** Rebuilds a trigger's definition from its `tgtype` bits, written the way the generator would write it. */
+function triggerSource(row: TriggerRow): string {
+	const bits = Number(row.type);
+	const has = (bit: number): boolean => (bits & bit) !== 0;
+
+	const timing = has(TRIGGER_BITS.before) ? 'before' : has(TRIGGER_BITS.instead) ? 'instead of' : 'after';
+
+	return triggerBody(timing, EVENT_BITS.filter(event => has(TRIGGER_BITS[event])),
+		qualified(row.schema, row.in), has(TRIGGER_BITS.row) ? 'row' : 'statement',
+		qualified(row.routineSchema, row.routineName));
+}
 
 /** A constraint's body, written the way the generator writes the same one. */
 function constraintBody(row: ConstraintRow): string {
@@ -147,7 +228,7 @@ const CATALOG_QUERIES: { readonly [K in ObjectKind]: CatalogQuery<Extract<Held, 
 	schema: entry(
 		`select n.nspname as name from pg_namespace n where ${IN_SCHEMAS}`,
 		(row: SchemaRow): SchemaHeld => ({
-			key: objectKey('schema', row.name), kind: 'schema', schema: row.name, name: row.name,
+			key: objectKey('schema', row.name), kind: 'schema', schema: row.name, name: row.name, dependsOn: [],
 		})),
 
 	domain: entry(
@@ -157,7 +238,7 @@ const CATALOG_QUERIES: { readonly [K in ObjectKind]: CatalogQuery<Extract<Held, 
 			where t.typtype = 'd' and t.typrelid = 0 and ${IN_SCHEMAS}`, 
 		(row: DomainRow): DomainHeld => ({
 			key: objectKey('domain', row.schema, row.name), kind: 'domain',
-			schema: row.schema, name: row.name,
+			schema: row.schema, name: row.name, dependsOn: [],
 			shape: row.type,
 		})),
 
@@ -167,7 +248,7 @@ const CATALOG_QUERIES: { readonly [K in ObjectKind]: CatalogQuery<Extract<Held, 
 			where c.relkind = 'r' and ${IN_SCHEMAS}`,
 		(row: TableRow): TableHeld => ({
 			key: objectKey('table', row.schema, row.name), kind: 'table',
-			schema: row.schema, name: row.name,
+			schema: row.schema, name: row.name, dependsOn: [],
 		})),
 
 	column: entry(
@@ -185,8 +266,8 @@ const CATALOG_QUERIES: { readonly [K in ObjectKind]: CatalogQuery<Extract<Held, 
 			key: objectKey('column', row.schema, row.in, row.name), kind: 'column',
 			schema: row.schema, name: row.name,
 			in: row.in,
-			dependsOn: row.typeKind === 'd' ? objectKey('domain', row.typeSchema, row.typeName) : null,
-			type: columnType(row),
+			dependsOn: domainOf(row),
+			type: typeOf(row),
 			notNull: row.notNull === 't',
 		})),
 
@@ -220,7 +301,7 @@ const CATALOG_QUERIES: { readonly [K in ObjectKind]: CatalogQuery<Extract<Held, 
 			in: row.in,
 			shape: constraintBody(row),
 			columns: columnsOf(row.cols),
-			dependsOn: row.type === 'f' ? refersTo(row.refKey) : null,
+			dependsOn: row.type === 'f' ? [refersTo(row.refKey)] : [],
 		})),
 
 	index: entry(
@@ -246,7 +327,29 @@ const CATALOG_QUERIES: { readonly [K in ObjectKind]: CatalogQuery<Extract<Held, 
 			in: row.in,
 			shape: indexBody(listOf(row.cols), row.type === 't'),
 			columns: columnsOf(row.cols),
+			dependsOn: [],
 		})),
+
+		function: entry(routineQuery('f'), (row: RoutineRow): FunctionHeld => routineHeld('function', row)),
+
+		procedure: entry(routineQuery('p'), (row: RoutineRow): ProcedureHeld => routineHeld('procedure', row)),
+
+		trigger: entry(
+			`select n.nspname as schema, c.relname as "in", g.tgname as name, g.tgtype as type,
+					fn.nspname as "routineSchema", f.proname as "routineName"
+				from pg_trigger g
+				join pg_class c on c.oid = g.tgrelid
+				join pg_namespace n on n.oid = c.relnamespace
+				join pg_proc f on f.oid = g.tgfoid
+				join pg_namespace fn on fn.oid = f.pronamespace
+				where not g.tgisinternal and ${IN_SCHEMAS}`,
+			(row: TriggerRow): TriggerHeld => ({
+				key: objectKey('trigger', row.schema, row.in, row.name), kind: 'trigger',
+				schema: row.schema, name: row.name,
+				in: row.in,
+				source: triggerSource(row),
+				dependsOn: [objectKey('function', row.routineSchema, row.routineName)],
+			})),
 };
 
 /** Reads what the database holds in the given schemas.

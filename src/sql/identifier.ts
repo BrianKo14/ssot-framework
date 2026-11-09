@@ -55,15 +55,16 @@ const CANONICAL: ReadonlyMap<string, string> = new Map([
 	['varchar', 'character varying%'],
 ]);
 
-/** A SQL type as the catalogue spells it, e.g. `varchar(100)` -> `character varying(100)`. */
-export function canonicalType(sqlType: string): string {
+/** A SQL type as the catalogue spells it, e.g. `varchar(100)` -> `character varying(100)`.
+ * @param modified false for a routine's params */
+export function canonicalType(sqlType: string, modified = true): string {
 	const parts = TYPE_SHAPE.exec(storageType(sqlType));
 
 	if (!parts) throw new Error(`"${sqlType}" does not read as a SQL type`);
 
 	const [, name, modifier = ''] = parts;
 
-	return (CANONICAL.get(name.toLowerCase()) ?? `${name}%`).replace('%', modifier);
+	return (CANONICAL.get(name.toLowerCase()) ?? `${name}%`).replace('%', modified ? modifier : '');
 }
 
 

@@ -7,7 +7,7 @@ import path from 'node:path';
 import { authTables } from '../auth/entities.js';
 import { loadConfig } from '../config.js';
 import type { Db } from '../db/postgres.js';
-import type { TableInfo } from '../schema/model.js';
+import type { RoutineInfo, TableInfo } from '../schema/model.js';
 import { type CatalogRow, readCatalog } from '../sql/catalog.js';
 import {
 	type Alteration, alterationKey, columnBody, comparedType, type Held, schemaSql, type Target,
@@ -67,8 +67,8 @@ async function printOrApply(sql: string, argv: string[], usage: string, done: st
 	}
 }
 
-const create = (tables: TableInfo[], argv: string[]): Promise<void> =>
-	printOrApply(schemaSql(allTables(tables)), argv, CREATE_USAGE, 'schema created');
+const create = (tables: TableInfo[], routines: RoutineInfo[], argv: string[]): Promise<void> =>
+	printOrApply(schemaSql(allTables(tables), routines), argv, CREATE_USAGE, 'schema created');
 
 
 // --- Seeding ---
@@ -169,23 +169,25 @@ async function rowNotes(db: Db, c: Changes): Promise<Map<string, string>> {
 function report(c: Changes): void {
 	const done = [c.removals.length && `${c.removals.length} object(s) removed or rebuilt`,
 		c.additions.length && `${c.additions.length} object(s) added`,
+		c.replacements.length && `${c.replacements.length} routine(s) or trigger(s) replaced`,
 		altered(c).length && `${altered(c).length} column(s) altered`].filter(Boolean);
 
 	console.log(done.length ? done.join(', ') : 'nothing to do');
 }
 
-async function update(tables: TableInfo[], argv: string[]): Promise<void> {
+async function update(tables: TableInfo[], routines: RoutineInfo[], argv: string[]): Promise<void> {
 	const opts = options(argv, UPDATE_USAGE, ['apply', 'drop', 'retype']);
 	const all = allTables(tables);
 	const db = await waitForDb(loadConfig().databaseUrl);
 
 	try {
-		const schemas = [...new Set([DEFAULT_SCHEMA, ...all.map(t => t.schema)])];
+		const schemas = [...new Set([DEFAULT_SCHEMA, ...all.map(t => t.schema), ...routines.map(r => r.schema)])];
 
 		const held = await readCatalog((text, params) => db.query<CatalogRow>(text, params), schemas);
-		const found = changes(all, held);
+		const found = changes(all, held, routines);
 
-		if (!found.removals.length && !found.additions.length && !altered(found).length) {
+		if (!found.removals.length && !found.additions.length && !found.replacements.length
+			&& !altered(found).length) {
 			console.log('the database already holds everything the definition asks for');
 			return;
 		}
@@ -209,16 +211,18 @@ async function update(tables: TableInfo[], argv: string[]): Promise<void> {
 /** Print the schema of a system, or apply it to the configured database.
  * 
  * @param tables the application's own tables, as `tablesFrom` built them
+ * @param routines the application's routines, as `routinesFrom` built them
  * @param argv the command's options */
-export const schemaCli = (tables: TableInfo[], argv = process.argv.slice(2)): void =>
-	run(() => create(tables, argv));
+export const schemaCli = (tables: TableInfo[], routines: RoutineInfo[], argv = process.argv.slice(2)): void =>
+	run(() => create(tables, routines, argv));
 
 /** Print what the configured database is missing of a system, or add it.
  * 
  * @param tables the application's own tables, as `tablesFrom` built them
+ * @param routines the application's routines, as `routinesFrom` built them
  * @param argv the command's options */
-export const updateCli = (tables: TableInfo[], argv = process.argv.slice(2)): void =>
-	run(() => update(tables, argv));
+export const updateCli = (tables: TableInfo[], routines: RoutineInfo[], argv = process.argv.slice(2)): void =>
+	run(() => update(tables, routines, argv));
 
 /** Print the inserts of a system's sample data, or load it into the configured database.
  * 

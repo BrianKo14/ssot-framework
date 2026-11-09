@@ -38,7 +38,7 @@ npm run db:seed -- --apply     # load it into DATABASE_URL
 
 ## Updating the database
 
-`npm run db:update` compares the system definition against the database and writes the SQL to keep it in sync with the definition (schemas, domains, tables, columns, keys, indexes).
+`npm run db:update` compares the system definition against the database and writes the SQL to keep it in sync with the definition (schemas, domains, tables, columns, keys, indexes, functions, procedures and triggers).
 
 ```
 npm run db:update                       # print what the database is missing
@@ -56,7 +56,9 @@ It always connects, since comparing means reading the database. If nothing diffe
 
 If a foreign key points to different columns than before, it counts as dropping the old one and making a new one.
 
-`--drop` only checks schemas the code mentions, but within those it'll want to delete anything it finds that the code doesn't mention.
+`--drop` only checks schemas the code mentions, but within those it'll want to delete anything it finds that the code doesn't mention. 
+
+A function or procedure whose params or result changed is dropped and created again, so it needs `--drop` too. Any trigger that runs it goes and comes back with it.
 
 ### `--retype`
 

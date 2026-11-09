@@ -1,10 +1,10 @@
 // The schema comparator
 
-import type { ColumnInfo, TableInfo } from '../schema/model.js';
+import type { ColumnInfo, RoutineInfo, TableInfo } from '../schema/model.js';
 import type { Catalog } from './catalog.js';
 import {
 	type Alteration, alterationKey, alterStatements, type ColumnHeld, comparedType, dropStatements, hasDomain,
-	type Held, isForeignKey, objectKey, script, type Target, targets,
+	type Held, objectKey, script, type Target, targets,
 } from './ddl.js';
 
 /** A list of targets that are missing from the database.
@@ -13,14 +13,14 @@ const missingIn = (target: Target, held: Catalog): Target[] =>
 	held.has(target.key) ? (target.parts ?? []).flatMap(part => missingIn(part, held)) : [target];
 
 /** A list of all the targets that are missing from the database. */
-const missing = (tables: TableInfo[], held: Catalog): Target[] =>
-	targets(tables).flatMap(target => missingIn(target, held));
+const missing = (asked: Target[], held: Catalog): Target[] =>
+	asked.flatMap(target => missingIn(target, held));
 
 /** Every object the definition asks for, a table's own columns and keys included. */
-const wanted = (tables: TableInfo[]): Map<string, Target> => {
+const wanted = (asked: Target[]): Map<string, Target> => {
 	const flat = (target: Target): Target[] => [target, ...(target.parts ?? []).flatMap(flat)];
 
-	return new Map(targets(tables).flatMap(flat).map(target => [target.key, target]));
+	return new Map(asked.flatMap(flat).map(target => [target.key, target]));
 };
 
 /** The results of comparing a definition against what a database holds. */
@@ -31,6 +31,8 @@ export interface Changes {
 	removals: Held[];
 	/** What the definition has that the database does not. */
 	additions: Target[];
+	/** What the database has with the same signature but different body, i.e. in routines. */
+	replacements: Target[];
 	/** Columns whose body the database holds differently than the definition declares it. */
 	alterations: Alteration[];
 }
@@ -38,14 +40,16 @@ export interface Changes {
 /** Compares a definition against what a database holds, in both directions.
  *
  * @param tables the definition, as `tablesFrom` built it
- * @param held what the database has, as `readCatalog` read it */
-export function changes(tables: TableInfo[], held: Catalog): Changes {
-	const asked = wanted(tables);
+ * @param held what the database has, as `readCatalog` read it
+ * @param routines the definition's routines, as `routinesFrom` built them */
+export function changes(tables: TableInfo[], held: Catalog, routines: RoutineInfo[] = []): Changes {
+	const all = targets(tables, routines);
+	const asked = wanted(all);
 
 	const byTable = new Map(tables.map(t => [`${t.schema}.${t.table}`, t]));
 
 	// TODO: schemas are never removed. The catalogue never looks at the schemas that are not in the definition.
-	const leaving = new Map([...held.values()]
+	const leaving = new Map<string, Held>([...held.values()]
 		.filter(h => h.kind !== 'schema')
 		.filter(h => {
 			const target = asked.get(h.key);
@@ -53,30 +57,48 @@ export function changes(tables: TableInfo[], held: Catalog): Changes {
 			// When the object is not in the definition.
 			if (target === undefined) return true;
 
-			// The types of column changes that require rebuilding.
-			if (h.kind !== 'domain' && h.kind !== 'constraint' && h.kind !== 'index') return false;
+			// Those rebuilt when their shape differs, as opposed to altered in place
+			if (h.kind !== 'domain' && h.kind !== 'constraint' && h.kind !== 'index'
+				&& h.kind !== 'function' && h.kind !== 'procedure') return false;
 
 			// When the object is in the definition but has a different shape.
 			return target.shape !== undefined && target.shape !== h.shape;
 		})
 		.map(h => [h.key, h]));
 
-	// Ensure that foreign keys are not left behind without their referenced keys.
-	for (const h of held.values())
-		if (h.kind === 'constraint' && isForeignKey(h.shape) && h.dependsOn !== null && leaving.has(h.dependsOn))
-			leaving.set(h.key, h);
+	// Remove references as well (FKs with no target, triggers with no routine, routines with no domain)
+	for (let grew = true; grew;) {
+		grew = false;
 
-	// Don't bother with objects that are being dropped together with their table.
+		for (const h of held.values())
+			if (h.kind !== 'column' && !leaving.has(h.key) && h.dependsOn.some(key => leaving.has(key))) {
+				leaving.set(h.key, h);
+				grew = true;
+			}
+	}
+
+	// Don't bother with objects that are being dropped together with their table
 	const goingWithItsTable = (h: Held): boolean =>
-		(h.kind === 'column' || h.kind === 'constraint' || h.kind === 'index')
+		(h.kind === 'column' || h.kind === 'constraint' || h.kind === 'index' || h.kind === 'trigger')
 		&& leaving.has(objectKey('table', h.schema, h.in));
 
 	const removals = [...leaving.values()].filter(h => !goingWithItsTable(h));
 
+	// Whatever stays but has another body is replaced in place
+	const replacements = [...held.values()].flatMap(h => {
+		const target = asked.get(h.key);
+
+		const replaceable = h.kind === 'function' || h.kind === 'procedure' || h.kind === 'trigger';
+
+		return replaceable && target?.source !== undefined && !leaving.has(h.key) && target.source !== h.source
+			? [target] : [];
+	});
+
 	return {
 		...columnChanges(paired(held, byTable, leaving), leaving),
 		removals,
-		additions: missing(tables, new Map([...held].filter(([key]) => !leaving.has(key)))),
+		additions: missing(all, new Map([...held].filter(([key]) => !leaving.has(key)))),
+		replacements,
 	};
 }
 
@@ -128,7 +150,7 @@ function columnChanges(
 
 		// If a column depends on a domain that is being removed, we need to
 		// detach it from the domain first, then reattach it once the domain is recreated.
-		if (held.dependsOn !== null && leaving.has(held.dependsOn)) {
+		if (held.dependsOn.some(key => leaving.has(key))) {
 			detachments.push({ ...at, retype: 'storage', notNull: null });
 			add(alterations, { ...at, retype: hasDomain(column) ? 'rejoin' : null, notNull });
 			continue;
@@ -161,6 +183,7 @@ const header = (c: Changes): string => {
 	return ['Generated by comparing the system definition against the database',
 		[c.removals.length ? `${c.removals.length} object(s) removed or rebuilt` : '',
 			c.additions.length ? `${c.additions.length} object(s) added` : '',
+			c.replacements.length ? `${c.replacements.length} routine(s) or trigger(s) replaced` : '',
 			columns ? `${columns} column(s) altered` : ''].filter(Boolean).join(', '),
 	].filter(Boolean).join('\n');
 };
@@ -175,6 +198,8 @@ export const updateSql = (c: Changes, notes: ReadonlyMap<string, string> = new M
 		...dropStatements(c.removals, notes), 		// `notes` keyed by `Held.key`
 		// Additions
 		...c.additions.map(target => target.sql),
+		// Replacements
+		...c.replacements.map(target => target.sql),
 		// Columns moving to the body the definition declares
 		...alterStatements(c.alterations, notes),	// `notes` keyed by `alterationKey`
 	], header(c));

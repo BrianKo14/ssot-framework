@@ -1,4 +1,4 @@
-// The SQL screen (SCOPE 7d): the statements that took effect, newest first, only about tables
+// The SQL screen: the statements that took effect, newest first, only about tables
 // this role may read. Behind the monitor's grant, and drawn like its actions.
 //
 // It doesn't poll: each read sends the whole (growing) file to be judged. It reads when opened,

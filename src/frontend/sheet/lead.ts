@@ -1,5 +1,5 @@
-// The controls in a record's leading cell: its claim, or latch (SCOPE 6e), and its undo
-// (SCOPE 6g). Plus the undo on a single cell that was written over.
+// The controls in a record's leading cell: its claim, or latch, and its undo.
+// Plus the undo on a single cell that was written over.
 
 import type { Capability, Change, TableMeta } from '../../shared/api.js';
 import { button } from '../kit/dom.js';

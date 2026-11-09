@@ -63,7 +63,7 @@ export interface SystemMeta {
 	undo: string;
 	/** Polling interval + presence tracking, in seconds. */
 	pollSeconds: number;
-	/** The monitor, when *this* caller may see it (SCOPE 8a/8b); null when not. */
+	/** The monitor, when *this* caller may see it; null when not. */
 	monitor: MonitorMeta | null;
 }
 
@@ -94,7 +94,7 @@ export interface Watching {
 export interface MonitorMeta {
 	users: TableMeta;	// the signed-in users: who they are, and their newest action
 	actions: TableMeta;	// one user's actions
-	/** The SQL dump (SCOPE 7d), when the server writes one; null when it does not. */
+	/** The SQL dump, when the server writes one; null when it does not. */
 	dump: TableMeta | null;
 }
 

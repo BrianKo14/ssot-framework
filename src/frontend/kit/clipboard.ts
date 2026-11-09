@@ -1,4 +1,4 @@
-// A block of cells, as a spreadsheet puts it on the clipboard and back (SCOPE 6h).
+// A block of cells, as a spreadsheet puts it on the clipboard and back.
 //
 // We only read `text/plain`: tab-separated, and written the same way by Excel, Google Sheets
 // and LibreOffice.

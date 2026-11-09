@@ -72,7 +72,7 @@ export interface SheetSpec {
 export interface Sheet extends SheetSpec {
 	/** The records drawn, in order. */
 	rows: Row[];
-	/** Lines typed into past the last row that aren't records yet (SCOPE 2a), drawn after `rows`. */
+	/** Lines typed into past the last row that aren't records yet, drawn after `rows`. */
 	pending: Row[];
 	render(data: Row[]): void;
 	/** Draws more records after the ones drawn, leaving those (and the marks on them) as they are. */
@@ -83,9 +83,9 @@ export interface Sheet extends SheetSpec {
 	redraw(row: Row): void;
 	/** Reads the row again into the same object, with the columns this sheet borrows. */
 	reread(row: Row): Promise<void>;
-	/** Writes typed values onto a record (SCOPE 7c). */
+	/** Writes typed values onto a record. */
 	patch(row: Row, body: Row): Promise<void>;
-	/** Puts back the record's last save, or one column of it (SCOPE 6g). */
+	/** Puts back the record's last save, or one column of it. */
 	undo(row: Row, field: string | null): Promise<void>;
 	/** Writes onto a line that isn't a record yet, inserting it once nothing is missing.
 	 * @returns the record it became, if it became one */
@@ -179,7 +179,7 @@ export function sheetsOf(env: Env): Sheets {
 
 		/** The one place a written row is put back: what the server answered, then (when this
 		 * sheet borrows columns) the row read again with them, since writing an fk can move it
-		 * under a different ancestor (SCOPE 7a). */
+		 * under a different ancestor. */
 		const write = async (row: Row, request: () => Promise<Row>): Promise<void> => {
 			let saved: Row;
 
@@ -202,7 +202,7 @@ export function sheetsOf(env: Env): Sheets {
 		};
 
 
-		// --- Lines that aren't records yet (SCOPE 2a, 6h) ---
+		// --- Lines that aren't records yet ---
 
 		/** What a line still needs: every column its insert writes, refuses empty, and has nothing
 		 * in. A subtable's master key and a column with a default are never among them. */

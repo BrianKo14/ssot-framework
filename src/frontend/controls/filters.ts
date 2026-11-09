@@ -29,7 +29,7 @@ export interface FilterBar {
 }
 
 /**
- * @param tables every table in `_meta`, to also offer the ancestors' columns (SCOPE 6b)
+ * @param tables every table in `_meta`, to also offer the ancestors' columns
  * @param operators the comparisons in `_meta`
  * @param apply called whenever `query()` changes
  */

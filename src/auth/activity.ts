@@ -48,7 +48,7 @@ const userAt = new Map([...[U_USERNAME, U_ROLE].map(c => [c, u(c)] as const), ..
 /** The columns that are shown in the activity log. */
 export const ACTION_FILTERS = LAST;
 
-/** The columns the SQL dump is read back by (SCOPE 7d): a statement written down is an action's
+/** The columns the SQL dump is read back by: a statement written down is an action's
  * time and SQL, one statement at a time. */
 export const DUMP_FILTERS = [A_AT, A_STATEMENTS];
 

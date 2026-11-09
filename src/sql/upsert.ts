@@ -3,7 +3,7 @@
 import type { ColumnInfo, TableInfo } from '../schema/model.js';
 import { columnList, q, tableRef } from './identifier.js';
 
-/** INSERT INTO table (given…, now…) VALUES ($1, $2, …, now(), …) ON CONFLICT (key) DO UPDATE SET …
+/** INSERT INTO table (given..., now...) VALUES ($1, $2, ..., now(), ...) ON CONFLICT (key) DO UPDATE SET ...
  *
  * @param key the columns that make up the primary key
  * @param given the columns bound as parameters, `$1...$n` in this order

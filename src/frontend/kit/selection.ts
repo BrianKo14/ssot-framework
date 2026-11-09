@@ -1,4 +1,4 @@
-// Picking a rectangle of cells on a sheet, and copying from / pasting onto it (SCOPE 6h).
+// Picking a rectangle of cells on a sheet, and copying from / pasting onto it.
 // It knows cells by position only; what a cell holds is the sheet's, handed in as a `Selectable`.
 
 import { cells, table, tsv, type Grid } from './clipboard.js';
@@ -50,6 +50,39 @@ const cellAt = (body: HTMLElement, target: EventTarget | null): At | null => {
 	if (td.classList.contains('lead') || td.classList.contains('editing')) return null;
 
 	return { row: tr.sectionRowIndex, column: td.cellIndex - 1 };
+};
+
+/** What an arrow key does to a cell's position. */
+const STEPS: Record<string, At> = {
+	ArrowUp: { row: -1, column: 0 },
+	ArrowDown: { row: 1, column: 0 },
+	ArrowLeft: { row: 0, column: -1 },
+	ArrowRight: { row: 0, column: 1 },
+};
+
+/** The nearest ancestor that scrolls. */
+const scrollerOf = (node: HTMLElement): HTMLElement | null => {
+	for (let up = node.parentElement; up; up = up.parentElement)
+		if (/auto|scroll/.test(getComputedStyle(up).overflow)) return up;
+
+	return null;
+};
+
+/** Scrolls the cell into view, clear of the sticky header and leading column that would cover it. */
+const reveal = (td: HTMLElement) => {
+	const frame = scrollerOf(td);
+
+	if (!frame) return;
+
+	const view = frame.getBoundingClientRect();
+	const cell = td.getBoundingClientRect();
+	const head = td.closest('table')?.tHead?.offsetHeight ?? 0;
+	const lead = td.parentElement?.firstElementChild?.getBoundingClientRect().width ?? 0;
+	const clear = (from: number, to: number, start: number, end: number) =>
+		from < start ? from - start : to > end ? to - end : 0;
+
+	frame.scrollTop += clear(cell.top, cell.bottom, view.top + head, view.bottom);
+	frame.scrollLeft += clear(cell.left, cell.right, view.left + lead, view.right);
 };
 
 /** One value pasted over several cells fills them all, as in a spreadsheet. */
@@ -154,10 +187,16 @@ export function selectionOf(): Selection {
 	proxy.addEventListener('cut', e => e.preventDefault());
 	proxy.addEventListener('input', hold);		// typing while cells are picked writes nothing
 	proxy.addEventListener('keydown', e => {
-		if (e.key !== 'Escape') return;
-
-		e.stopPropagation();				// lets go of the cells, not of the panel
-		clear();
+		if (e.key === 'Escape') {
+			e.stopPropagation();			// lets go of the cells, not of the panel
+			clear();
+		} else if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+			e.preventDefault();
+			open();
+		} else if (STEPS[e.key] && !e.ctrlKey && !e.metaKey && !e.altKey) {
+			e.preventDefault();			// not the page scrolling, nor a caret in the box
+			move(STEPS[e.key], e.shiftKey);
+		}
 	});
 
 	// Like the cell editor: leaving is a decision, losing the window isn't. Going to Excel to
@@ -167,6 +206,41 @@ export function selectionOf(): Selection {
 
 		addEventListener('focus', () => { if (picked) hold(); }, { once: true });
 	});
+
+
+	// --- Moving it ---
+
+	/** Steps the picked cell by one, staying inside the body: Shift keeps the anchor, stretching
+	 * the range as Shift+click does; without it the range is the one cell it lands on. */
+	const move = (by: At, stretch: boolean) => {
+		if (!picked) return;
+
+		const lines = picked.body.children;
+		const row = Math.min(Math.max(picked.focus.row + by.row, 0), lines.length - 1);
+		const columns = (lines[row]?.children.length ?? 1) - 1;		// the leading cell isn't one
+		const column = Math.min(Math.max(picked.focus.column + by.column, 0), columns - 1);
+
+		if (columns < 1) return;
+
+		picked.focus = { row, column };
+
+		if (!stretch) picked.anchor = picked.focus;
+
+		paint();
+		reveal(lines[row].children[column + 1] as HTMLElement);
+	};
+
+
+	/** Opens the cell the range ends on, the way a double-click does: the cell's own handler is the
+	 * one way in, and knows whether it may be written. A cell with none does nothing. The cell
+	 * editor taking the focus is what lets go of the range. */
+	const open = () => {
+		if (!picked) return;
+
+		const { row, column } = picked.focus;
+
+		picked.body.children[row]?.children[column + 1]?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+	};
 
 
 	// --- Picking ---

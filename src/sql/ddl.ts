@@ -200,7 +200,7 @@ interface Constraint {
 	body: string;		// e.g. `primary key ("fecha", "id")`
 }
 
-/** How a constraint is written inside a `create table`, and after `alter table … add`. */
+/** How a constraint is written inside a `create table`, and after `alter table ... add`. */
 const inline = (c: Constraint): string => `constraint ${q(c.name)} ${c.body}`;
 
 const constraintTarget = (t: TableInfo, c: Constraint): Target => ({

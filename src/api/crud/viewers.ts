@@ -69,9 +69,9 @@ export function viewersRouter(m: Mount, presence: Seeing): Router {
 	});
 
 	return routes()
-		// GET /_viewers[?tab=…] — before `byPk`, so the name wins over a single-column key
+		// GET /_viewers[?tab=...] — before `byPk`, so the name wins over a single-column key
 		.get(`/${VIEWERS}`, watching(false))
 
-		// GET /:pk0[/:pk1...]/_viewers[?tab=…]
+		// GET /:pk0[/:pk1...]/_viewers[?tab=...]
 		.get(`${m.byPk}/${VIEWERS}`, watching(true));
 }

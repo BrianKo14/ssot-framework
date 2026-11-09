@@ -1,4 +1,4 @@
-// The monitor screen (SCOPE 8a, 8b): who is signed in, listed like a table. A line opens a
+// The monitor screen: who is signed in, listed like a table. A line opens a
 // panel with the tables that user has open and everything they did, newest first, each action
 // unfolding into the SQL it ran.
 //
@@ -43,7 +43,7 @@ export interface MonitorOptions {
 const USER_HEADINGS = ['Usuario', 'Rol', 'Última actividad', 'Pantalla'];
 const ACTION_HEADINGS = ['Cuándo', 'Pantalla', 'Request'];
 
-/** The request as typed: a filter reads as JSON, not `%7B%22…`. */
+/** The request as typed: a filter reads as JSON, not `%7B%22...`. */
 const readable = (request: string) => {
 	try { return decodeURIComponent(request); } catch { return request; }
 };

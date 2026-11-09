@@ -1,4 +1,4 @@
-// Who else is here (SCOPE 6c, 6d), and the rail of screens on the left.
+// Who else is here, and the rail of screens on the left.
 //
 // Each tab gets one colour, used three times: a circle beside the counts, an outline on the line
 // its cursor is on, and a circle beside its screen in the rail.

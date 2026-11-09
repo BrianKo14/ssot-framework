@@ -1,7 +1,7 @@
 // Saving the list as a file.
 //
-// There is no export endpoint: the file is the same list request, asked in another format
-// (SCOPE 1c). Where it lands is the browser's setting.
+// There is no export endpoint: the file is the same list request, asked in another
+// format. Where it lands is the browser's setting.
 
 import { el } from '../kit/dom.js';
 import { fetched } from './api.js';

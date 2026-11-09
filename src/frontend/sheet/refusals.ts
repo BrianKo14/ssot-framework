@@ -1,4 +1,4 @@
-// Who holds which record (SCOPE 6e), and why a write was refused, worded for the screen.
+// Who holds which record, and why a write was refused, worded for the screen.
 // The server words its refusals in English; the screen speaks Spanish.
 
 import type { FieldErrors, Lock, TableMeta } from '../../shared/api.js';

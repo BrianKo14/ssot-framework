@@ -98,7 +98,7 @@ export function tableScreen(meta: SystemMeta, env: Env): TableScreen {
 	const filters = filterBar(tables, meta.operators, () => { if (screen) route.go(here()); });
 
 
-	// --- Who else is here (SCOPE 6c, 6d, 6e) ---
+	// --- Who else is here ---
 
 	/** Rows this tab is in the middle of changing. Reading one again would move its version
 	 * under the write about to be sent with it; the refusal at save time speaks instead. */
@@ -132,7 +132,7 @@ export function tableScreen(meta: SystemMeta, env: Env): TableScreen {
 	};
 
 
-	// --- Ancestor columns (SCOPE 6b) ---
+	// --- Ancestor columns ---
 
 	/** What each screen borrows from its ancestors. Not in the address and not stored: it lasts
 	 * as long as the page, and survives stepping to another screen and back. */

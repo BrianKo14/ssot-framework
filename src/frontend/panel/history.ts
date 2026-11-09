@@ -1,4 +1,4 @@
-// A record's history in the panel (SCOPE 8c): what each column was, what it became, and who
+// A record's history in the panel: what each column was, what it became, and who
 // wrote it, newest first. Folded on every record until asked for.
 
 import type { Logged, TableMeta } from '../../shared/api.js';

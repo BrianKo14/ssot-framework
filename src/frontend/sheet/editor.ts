@@ -10,7 +10,7 @@ import { refused } from '../wire/records.js';
 import { CHANGED, placed } from './refusals.js';
 import type { Env, Sheet } from './sheet.js';
 
-/** What an editor writes into: a record, or a line that isn't a record yet (SCOPE 2a). */
+/** What an editor writes into: a record, or a line that isn't a record yet. */
 export interface Line {
 	/** What the line holds now; the editor starts from it. */
 	row: Row;
@@ -22,7 +22,7 @@ export interface Line {
 }
 
 export interface Editor {
-	/** Opens a record's cell, unless the row changed or was claimed since it was read (SCOPE 6c). */
+	/** Opens a record's cell, unless the row changed or was claimed since it was read. */
 	enter(s: Sheet, row: Row, c: ColumnMeta, td: HTMLTableCellElement): Promise<void>;
 	edit(s: Sheet, c: ColumnMeta, td: HTMLTableCellElement, line: Line): void;
 	/** Where the open cell puts this tab's cursor; empty when none. */

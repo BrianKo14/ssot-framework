@@ -37,7 +37,7 @@ const readRows = async (
 
 export function readRouter(m: Mount): Router {
 	return routes()
-		// GET /[?filter={"col":value,"col2":{"op":"ge","value":…},...}][&with=["fk.col",…]][&children=["entity",{"entity":…,"fk":…},…]][&format=xlsx|txt]
+		// GET /[?filter={"col":value,"col2":{"op":"ge","value":...},...}][&with=["fk.col",...]][&children=["entity",{"entity":...,"fk":...},...]][&format=xlsx|txt]
 		.get('/', wrap(async (req, res) => {
 			const format = formatNamed(req.query.format);					// before the query: a bad format costs no round trip
 			const raw = m.withInherited(req, parseFilter(req.query.filter)); 		// under a master, its key comes from the path
@@ -67,7 +67,7 @@ export function readRouter(m: Mount): Router {
 			res.json(await m.changes.history(m.t.entity, m.addressOf(record), field, now));
 		}))
 
-		// GET /:pk0[/:pk1...][?with=["fk.col",…]][&children=["entity",{"entity":…,"fk":…},…]]
+		// GET /:pk0[/:pk1...][?with=["fk.col",...]][&children=["entity",{"entity":...,"fk":...},...]]
 		.get(m.byPk, wrap(async (req, res) => {
 			const { rows } = await readRows(m, req, [], (_, params) => equalities(m.addressedRow(req), params, atBase));
 

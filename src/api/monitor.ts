@@ -42,7 +42,7 @@ export function monitorRouter(activities: Activities, presence: Presence, guarde
 	return Router()
 		.use(permit(guarded))
 
-		// GET /[?filter=…][&tab=…] — who is signed in with their newest action + every open tab.
+		// GET /[?filter=...][&tab=...] — who is signed in with their newest action + every open tab.
 		.get('/', wrap(async (req, res) => {
 			const [online, tabs] = await Promise.all([
 				activities.online(unseen(req), parseFilter(req.query.filter)),
@@ -52,7 +52,7 @@ export function monitorRouter(activities: Activities, presence: Presence, guarde
 			res.json({ online, tabs } satisfies Monitored);
 		}))
 
-		// GET /:user[?filter=…] — everything they did, newest first
+		// GET /:user[?filter=...] — everything they did, newest first
 		.get('/:user', wrap(async (req, res) => {
 			res.json(await activities.of(req.params.user, unseen(req), parseFilter(req.query.filter)) satisfies Activity[]);
 		}));
@@ -70,7 +70,7 @@ export function dumpRouter(dump: DumpLog, guarded: Guarded, tables: TableInfo[])
 	return Router()
 		.use(permit(guarded))
 
-		// GET /[?filter=…] — what took effect, newest first
+		// GET /[?filter=...] — what took effect, newest first
 		.get('/', wrap(async (req, res) => {
 			res.json(await dump.read(hiddenIn(unseen(req)), parseFilter(req.query.filter)) satisfies DumpRead);
 		}));

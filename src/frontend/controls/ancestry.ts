@@ -1,4 +1,4 @@
-// The picker for ancestor columns (SCOPE 6b): the fields of the tables the screen points at,
+// The picker for ancestor columns: the fields of the tables the screen points at,
 // and of the ones *those* point at, ticked on and off.
 //
 // A `<dialog>`, not a `menu`: a menu closes on the press that ticks a box, and the browser's

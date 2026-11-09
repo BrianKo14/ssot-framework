@@ -1,4 +1,4 @@
-// The subtables under the record panel (SCOPE 6a): one tab per table that is a detail of the
+// The subtables under the record panel: one tab per table that is a detail of the
 // record's, each a sheet of the detail's rows under that record.
 
 import type { TableMeta } from '../../shared/api.js';

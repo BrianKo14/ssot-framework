@@ -1,4 +1,4 @@
-// Copying cells out of a sheet and pasting a block onto it (SCOPE 6h).
+// Copying cells out of a sheet and pasting a block onto it.
 
 import type { ColumnMeta } from '../../shared/api.js';
 import type { Grid } from '../kit/clipboard.js';

@@ -40,7 +40,7 @@ export interface Reading {
 	 * Refuses a name that reached nothing, in the same words as an unknown filter key.
 	 * @param asked the `?with=` names; one of the table's own is a no-op. */
 	shown(asked: string[]): ColumnInfo[];
-	/** `select … from … left join … [conditions]`
+	/** `select ... from ... left join ... [conditions]`
 	 * @param columns what to select, as `shown` returned it. */
 	statement(columns: ColumnInfo[], conditions: string): string;
 	/** What to `order by`: the pk, written for this query. */

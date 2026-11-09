@@ -1,4 +1,4 @@
-// The presence poll (SCOPE 6d): this tab says where it is, and asks who else is there.
+// The presence poll: this tab says where it is, and asks who else is there.
 
 import type { Lock, Viewer, Watching } from '../../shared/api.js';
 import { same } from '../kit/text.js';

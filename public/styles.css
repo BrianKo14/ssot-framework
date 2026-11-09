@@ -18,7 +18,7 @@
 
 	--radius: 6px;
 
-	/* One per open tab (SCOPE 6d). Eight hues far enough apart to be told apart at the size of
+	/* One per open tab. Eight hues far enough apart to be told apart at the size of
 	   a letter, all dark enough to carry white text — and deliberately none of them the brand
 	   green (which already means "the open row") or the red `--bad` reads as. */
 	--viewer-0: #2563eb;
@@ -40,19 +40,19 @@
 	--icon-chevron: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 6.25 8 9.75l3.5-3.5"/></svg>');
 	--icon-plus: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.6" stroke-linecap="round"><path d="M8 3.4v9.2M3.4 8h9.2"/></svg>');
 	--icon-export: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.2v7.6M5.1 5.1 8 2.2l2.9 2.9M2.9 10.3v1.6a1.5 1.5 0 0 0 1.5 1.5h7.2a1.5 1.5 0 0 0 1.5-1.5v-1.6"/></svg>');
-	/* The latch on a line (SCOPE 6e): shut when the record is held, open when it can be taken.
+	/* The latch on a line: shut when the record is held, open when it can be taken.
 	   Two marks rather than one dimmed and one lit — at this size a difference in intensity
 	   reads as the pointer being answered, not as the record changing hands. Same body in both;
 	   the shut one's shackle comes down into it on the left, the open one's stands free. */
 	--icon-lock: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.2" y="7" width="9.6" height="6.2" rx="1.6"/><path d="M5.6 7V5.2a2.4 2.4 0 0 1 4.8 0V7"/></svg>');
 	--icon-unlock: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.2" y="7" width="9.6" height="6.2" rx="1.6"/><path d="M5.6 5.2a2.4 2.4 0 0 1 4.8 0V7"/></svg>');
-	/* The undo (SCOPE 6g): a shaft that turns back on itself, with the head on the end it came
+	/* The undo: a shaft that turns back on itself, with the head on the end it came
 	   from. It reads as one motion reversed, which is what the button does — and it leans left,
 	   away from the padlock's upright body, so the two do not read as a pair at this size. */
 	--icon-code: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 4.5 2 8l3.5 3.5"/><path d="M10.5 4.5 14 8l-3.5 3.5"/></svg>');
 	--icon-refresh: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8a5 5 0 1 1-1.46-3.54"/><path d="M13 2.5v2.5h-2.5"/></svg>');
 	--icon-undo: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.4 3.4 3.4 6.4l3 3"/><path d="M3.4 6.4h5.8a3.2 3.2 0 0 1 0 6.4H6.4"/></svg>');
-	/* The monitor (SCOPE 8a): a pulse, since what it shows is what is happening now. */
+	/* The monitor: a pulse, since what it shows is what is happening now. */
 	--icon-pulse: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1.8 8.4h2.8l1.7-4.2 3.2 8 1.7-3.8h3"/></svg>');
 }
 
@@ -220,7 +220,7 @@ aside h2 {
 	-webkit-mask-image: var(--icon-pulse);
 	mask-image: var(--icon-pulse);
 }
-#tools a[data-entity="_dump"]::before {		/* the SQL dump (SCOPE 7d): code, not a pulse */
+#tools a[data-entity="_dump"]::before {		/* the SQL dump: code, not a pulse */
 	-webkit-mask-image: var(--icon-code);
 	mask-image: var(--icon-code);
 }
@@ -283,7 +283,7 @@ main > header {
 	letter-spacing: .03em;
 }
 
-/* Who else has this screen open (SCOPE 6d), just left of what the screen says about itself:
+/* Who else has this screen open, just left of what the screen says about itself:
    who is here, then what is here. One circle per open tab, overlapped into a stack so the
    header does not grow a column's worth each time somebody arrives. Hidden outright when
    nobody is — an empty stack is noise, and one that appears *is* the notification. */
@@ -850,11 +850,11 @@ a.ref {
 }
 a.ref:hover { color: var(--brand-ink); text-decoration-color: currentColor; }
 
-/* A sheet's leading column: the handle that opens a row, the latch that holds the record (SCOPE
-   6e) and the undo that puts its last save back (SCOPE 6g), pinned so all three survive a
-   sideways scroll. It holds no data, so it stays empty until the row is pointed at — the one
-   thing that shows without being asked is a padlock somebody is holding, because that is news
-   about the record rather than something this column is offering. The grid's handle is a button
+/* A sheet's leading column: the handle that opens a row, the latch that holds the record and the undo that
+   puts its last save back, pinned so all three survive a sideways scroll. It holds no data,
+   so it stays empty until the row is pointed at — the one thing that shows
+   without being asked is a padlock somebody is holding, because that is news about the record
+   rather than something this column is offering. The grid's handle is a button
    (the panel opens where the screen already is), a subtable's is a link (the row is read on its
    own screen) — one shape, so which one it is never shows.
 
@@ -953,7 +953,7 @@ tr.open .lead :is(button, a) { opacity: 1; }
 .lead .latch:disabled { cursor: default; }
 .lead .latch[data-held="free"]:disabled { opacity: 0; }
 
-/* The row's undo (SCOPE 6g), the third slot. Shown when the row is pointed at, like the two
+/* The row's undo, the third slot. Shown when the row is pointed at, like the two
    beside it — and shown *whether or not* there is anything to put back, which is where it parts
    company with the free latch: a latch with nothing to offer offers nothing, but a row's undo is
    one of the three things this column always says about a line, and a slot that came and went
@@ -970,7 +970,7 @@ tr.open .lead :is(button, a) { opacity: 1; }
 tr.open .lead { background: var(--brand-soft); }
 tr.open .lead :is(button, a) { --mark-ink: var(--brand-ink); }
 
-/* The line another cursor is sitting on (SCOPE 6c/6d): a band in the colour of the circle that
+/* The line another cursor is sitting on: a band in the colour of the circle that
    cursor belongs to, which is the whole of how the two are tied together.
 
    The grid draws its own lines as each cell's right and bottom border, so the colour *becomes*
@@ -1061,7 +1061,7 @@ td.editable:hover::before {
 	pointer-events: none;
 }
 
-/* The cell's own undo (SCOPE 6g): drawn only on a cell that something was written over, and shown
+/* The cell's own undo: drawn only on a cell that something was written over, and shown
    only while the pointer is on it — the same offer the handle makes, one value down. It lies over
    the value's right edge instead of in the flow, so a column does not jump wider the moment a
    cell turns out to have a history; opaque for the reason the editor's box is, which is that what
@@ -1123,7 +1123,7 @@ td.editing input {
 td.editing input:disabled { color: var(--muted); }	/* in flight: the value is the server's problem now */
 td.bad input { outline-color: var(--bad); }		/* refused, and still on screen to be fixed */
 
-/* A line typed into past the last record that is not a record yet (SCOPE 2a): it becomes one as
+/* A line typed into past the last record that is not a record yet: it becomes one as
    soon as it has every field its insert requires. Until then what was typed reads as not stored —
    muted, like a value in flight — the fields it still lacks are tinted with the colour of a
    refusal, and its leading cell offers to throw it away. That offer shows without pointing, unlike
@@ -1134,7 +1134,7 @@ tr.pending > td.bad { color: var(--bad); }
 .lead .discard { --mark: var(--icon-close); }
 tr.pending .lead .discard { opacity: 1; }
 
-/* Cells picked for the clipboard (SCOPE 6h): a very light blue, outlined in the same blue. Which
+/* Cells picked for the clipboard: a very light blue, outlined in the same blue. Which
    cells are picked, and which of them lie on each edge, is written by `selection.ts` by position;
    this is how they look. The fill is mixed out of the surface, so the dark theme needs only its
    own blue. */
@@ -1384,7 +1384,7 @@ tr.pending .lead .discard { opacity: 1; }
 :is(#peek-cancel, #peek-save):disabled { opacity: .5; cursor: default; }
 
 
-/* --- The record's subtables (SCOPE 6a) --- */
+/* --- The record's subtables --- */
 
 /* Under the record and under its actions, because that is the order the model reads in: this is
    what belongs to the row above, not another way of writing it. Its height is its content's:
@@ -1475,7 +1475,7 @@ tr.pending .lead .discard { opacity: 1; }
 }
 
 
-/* --- The record's history (SCOPE 8c) --- */
+/* --- The record's history --- */
 
 /* Under the subtables, at the bottom of the panel, because it is the least current thing about a
    record: what it holds, then what belongs to it, then what it used to hold. It borrows the
@@ -1727,7 +1727,7 @@ tr.pending .lead .discard { opacity: 1; }
 }
 
 
-/* --- Ancestor columns (SCOPE 6b) --- */
+/* --- Ancestor columns --- */
 
 /* A column the screen borrowed from a table it points at. Quieter than the table's own — it is
    context beside the record, not part of it — but drawn with `color`, never `opacity`: the cell
@@ -1836,7 +1836,7 @@ th.borrowed small { color: var(--muted); }
 /* --- Narrow screens: the rail becomes a strip above the grid --- */
 
 @media (max-width: 45rem) {
-	/* `minmax(0, …)`, as above: a `1fr` track floors at min-content, and a wide grid would
+	/* `minmax(0, ...)`, as above: a `1fr` track floors at min-content, and a wide grid would
 	   then push the whole page sideways instead of scrolling inside its own pane. */
 	body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
 
@@ -1849,7 +1849,7 @@ th.borrowed small { color: var(--muted); }
 }
 
 
-/* --- Monitor (SCOPE 8a, 8b) --- */
+/* --- Monitor --- */
 
 /* The list is the grid's own table; a user's panel is the record panel's frame (shared above),
    wider, since what it holds is a log rather than a form. */
@@ -1935,7 +1935,7 @@ th.borrowed small { color: var(--muted); }
 .monitor-record { color: var(--muted); font-variant-numeric: tabular-nums; }
 
 
-/* --- SQL dump (SCOPE 7d) --- */
+/* --- SQL dump --- */
 
 /* Drawn as the monitor's actions are: one line each, unfolding into the whole statement. Here the
    statement has the screen to itself, so the table is as wide as the screen and no wider: the time
@@ -1944,7 +1944,7 @@ th.borrowed small { color: var(--muted); }
 #dump table { width: 100%; table-layout: fixed; }
 #dump thead th:nth-child(2) { width: 11rem; }
 
-/* The cut is a fade over its last characters rather than a "…": monospace SQL is cut mid-token
+/* The cut is a fade over its last characters rather than a "...": monospace SQL is cut mid-token
    wherever the width falls, and a glyph wedged against it reads as part of the code. A statement
    short enough to fit never reaches the faded end, so only one that goes on is faded. */
 .dump-statement {

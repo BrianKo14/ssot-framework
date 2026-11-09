@@ -1,9 +1,9 @@
-// The address bar (URL grammar): `/<screen>/<pk…>?<column>[.<op>]=<value>`.
+// The address bar (URL grammar): `/<screen>/<pk...>?<column>[.<op>]=<value>`.
 
 import type { OperatorMeta, SystemMeta, TableMeta } from '../../shared/api.js';
 import { type Reachable, reachableFrom } from './fk.js';
 
-/** One filter condition. The column may be an ancestor's (SCOPE 6b). */
+/** One filter condition. The column may be an ancestor's. */
 export interface Condition {
 	column: Reachable;
 	operator: OperatorMeta;

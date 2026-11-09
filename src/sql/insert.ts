@@ -3,7 +3,7 @@
 import type { ColumnInfo, TableInfo } from '../schema/model.js';
 import { columnList, tableRef } from './identifier.js';
 
-/** INSERT INTO table (given…) VALUES ($1, $2, …)
+/** INSERT INTO table (given...) VALUES ($1, $2, ...)
  *
  * @param given the columns bound as parameters, `$1...$n` in this order
  * @returns the statement; the caller binds `given`'s values, in the same order */

@@ -89,7 +89,7 @@ export const searchColumn = (target: TableMeta): string | undefined =>
 
 
 
-// --- Ancestry (SCOPE 6b) ---
+// --- Ancestry ---
 
 /** What a table reached through fks is called, by how many fks it took. The screen goes only as
  * deep as it has words for; the server's own limit is separate and looser. */

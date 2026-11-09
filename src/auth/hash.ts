@@ -26,7 +26,7 @@ const readParams = (raw: string): Params | undefined => {
 	return m ? { N: Number(m[1]), r: Number(m[2]), p: Number(m[3]) } : undefined;
 };
 
-/** PHC-shaped (`scrypt$N=…,r=…,p=…$salt$key`), i.e. cost parameters are stored with the hash.
+/** PHC-shaped (`scrypt$N=...,r=...,p=...$salt$key`), i.e. cost parameters are stored with the hash.
  * 
  * Raising them later then re-hashes each user on their next login instead of invalidating
  * every stored password at once. */

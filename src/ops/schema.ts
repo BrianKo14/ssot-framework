@@ -7,14 +7,16 @@ import path from 'node:path';
 import { authTables } from '../auth/entities.js';
 import { loadConfig } from '../config.js';
 import type { Db } from '../db/postgres.js';
+import { fileRows } from '../format/registry.js';
+import { tab } from '../format/tab.js';
 import type { RoutineInfo, TableInfo } from '../schema/model.js';
 import { type CatalogRow, readCatalog } from '../sql/catalog.js';
 import {
-	type Alteration, alterationKey, columnBody, comparedType, type Held, schemaSql, type Target,
+	type Alteration, alterationKey, columnBody, comparedType, type Held, schemaSql, script, type Target,
 } from '../sql/ddl.js';
 import { DEFAULT_SCHEMA, qualified, tableRef } from '../sql/identifier.js';
-import { altered, changes, type Changes, updateSql } from '../sql/migrate.js';
-import { seedSql } from '../sql/seed.js';
+import { altered, changes, type Changes, createdTables, updateSql } from '../sql/migrate.js';
+import { loadStatements, seedSql, type Source } from '../sql/seed.js';
 import { run, waitForDb } from './cli.js';
 
 
@@ -67,19 +69,37 @@ async function printOrApply(sql: string, argv: string[], usage: string, done: st
 	}
 }
 
-const create = (tables: TableInfo[], routines: RoutineInfo[], argv: string[]): Promise<void> =>
-	printOrApply(schemaSql(allTables(tables), routines), argv, CREATE_USAGE, 'schema created');
+/** Creates every table + fills them with initial data. */
+async function create(tables: TableInfo[], routines: RoutineInfo[], initial: string | undefined, argv: string[]): Promise<void> {
+	const all = allTables(tables);
+	const rows = loadStatements(all, await sourcesIn(initial));
+
+	const sql = schemaSql(all, routines) + (rows.length ? `\n${script(rows, `initial data from ${initial}`)}` : '');
+
+	await printOrApply(sql, argv, CREATE_USAGE, 'schema created');
+}
 
 
-// --- Seeding ---
+// --- Rows from files ---
+
+const TAB = '.tab';
+
+/** Every `<entity>.tab` file in `dir`, read the way an import reads one. */
+async function sourcesIn(dir: string | undefined): Promise<Source[]> {
+	if (dir === undefined) return [];
+
+	const files = (await readdir(dir)).filter(name => name.endsWith(TAB)).sort();
+
+	return Promise.all(files.map(async name => ({
+		name,
+		entity: name.slice(0, -TAB.length),
+		...fileRows(tab, name, await readFile(path.join(dir, name), 'utf8')),
+	})));
+}
 
 /** Loads every `<entity>.tab` file in `dir` into the table of that entity. */
 async function seed(tables: TableInfo[], dir: string, argv: string[]): Promise<void> {
-	const files = (await readdir(dir)).filter(name => name.endsWith('.tab')).sort();
-
-	const sources = await Promise.all(files.map(async name =>
-		({ entity: name.slice(0, -'.tab'.length), text: await readFile(path.join(dir, name), 'utf8') })));
-
+	const sources = await sourcesIn(dir);
 	const sql = seedSql(tables, sources, `sample data from ${dir}`);
 
 	await printOrApply(sql, argv, SEED_USAGE, `${sources.length} files loaded from ${dir}`);
@@ -166,18 +186,20 @@ async function rowNotes(db: Db, c: Changes): Promise<Map<string, string>> {
 }
 
 /** Report the changes that were made. */
-function report(c: Changes): void {
+function report(c: Changes, rows: number): void {
 	const done = [c.removals.length && `${c.removals.length} object(s) removed or rebuilt`,
 		c.additions.length && `${c.additions.length} object(s) added`,
 		c.replacements.length && `${c.replacements.length} routine(s) or trigger(s) replaced`,
-		altered(c).length && `${altered(c).length} column(s) altered`].filter(Boolean);
+		altered(c).length && `${altered(c).length} column(s) altered`,
+		rows && `${rows} row(s) of initial data loaded`].filter(Boolean);
 
 	console.log(done.length ? done.join(', ') : 'nothing to do');
 }
 
-async function update(tables: TableInfo[], routines: RoutineInfo[], argv: string[]): Promise<void> {
+async function update(tables: TableInfo[], routines: RoutineInfo[], initial: string | undefined, argv: string[]): Promise<void> {
 	const opts = options(argv, UPDATE_USAGE, ['apply', 'drop', 'retype']);
 	const all = allTables(tables);
+	const sources = await sourcesIn(initial);	// before connecting: a bad file costs no round trip
 	const db = await waitForDb(loadConfig().databaseUrl);
 
 	try {
@@ -196,12 +218,13 @@ async function update(tables: TableInfo[], routines: RoutineInfo[], argv: string
 		refuseUnretypable(found, opts);
 		await refuseUnfillable(db, found.additions);
 
-		const sql = updateSql(found, await rowNotes(db, found));
+		const rows = loadStatements(all, sources, { into: createdTables(all, found) });
+		const sql = updateSql(found, await rowNotes(db, found), rows);
 
 		if (!opts.apply) { console.log(sql); return; }
 
 		await db.query(sql);
-		report(found);
+		report(found, rows.length);
 	} finally {
 		await db.close();
 	}
@@ -212,17 +235,19 @@ async function update(tables: TableInfo[], routines: RoutineInfo[], argv: string
  * 
  * @param tables the application's own tables, as `tablesFrom` built them
  * @param routines the application's routines, as `routinesFrom` built them
+ * @param initial a folder of `<entity>.tab` files, loaded into each table as it is created
  * @param argv the command's options */
-export const schemaCli = (tables: TableInfo[], routines: RoutineInfo[], argv = process.argv.slice(2)): void =>
-	run(() => create(tables, routines, argv));
+export const schemaCli = (tables: TableInfo[], routines: RoutineInfo[], initial?: string, argv = process.argv.slice(2)): void =>
+	run(() => create(tables, routines, initial, argv));
 
 /** Print what the configured database is missing of a system, or add it.
  * 
  * @param tables the application's own tables, as `tablesFrom` built them
  * @param routines the application's routines, as `routinesFrom` built them
+ * @param initial a folder of `<entity>.tab` files, loaded into each table as it is created
  * @param argv the command's options */
-export const updateCli = (tables: TableInfo[], routines: RoutineInfo[], argv = process.argv.slice(2)): void =>
-	run(() => update(tables, routines, argv));
+export const updateCli = (tables: TableInfo[], routines: RoutineInfo[], initial?: string, argv = process.argv.slice(2)): void =>
+	run(() => update(tables, routines, initial, argv));
 
 /** Print the inserts of a system's sample data, or load it into the configured database.
  * 

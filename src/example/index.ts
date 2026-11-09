@@ -21,6 +21,7 @@ export const system: System = {
 	routines,
 	grants: { monitor: ['admin'] },		// which roles are allowed to monitor
 	seed: 'src/example/aida',
+	initial: 'src/example/initial',
 };
 
 if (import.meta.main) // when not run directly (tests), this is false

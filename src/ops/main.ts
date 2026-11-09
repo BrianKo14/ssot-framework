@@ -18,6 +18,8 @@ export interface System {
 	grants?: Grants;
 	/** A folder of `<entity>.tab` files, for `seed` */
 	seed?: string;
+	/** A folder of `<entity>.tab` files, loaded into a table when `schema` or `update` creates it */
+	initial?: string;
 }
 
 const COMMANDS: Record<string, (system: System, argv: string[]) => void> = {
@@ -25,11 +27,12 @@ const COMMANDS: Record<string, (system: System, argv: string[]) => void> = {
 	/** Builds the app from the tables (API, screens, login, monitor) and turns it on a port. */
 	start: (s) => run(() => serve(s.tables, s.grants)),
 
-	/** Creates the whole database, or prints the SQL if you leave out `--apply`. */
-	schema: (s, argv) => schemaCli(s.tables, s.routines ?? [], argv),
+	/** Creates the whole database with its initial data, or prints the SQL if you leave out `--apply`. */
+	schema: (s, argv) => schemaCli(s.tables, s.routines ?? [], s.initial, argv),
 
-	/** Changes the database to match the definition, if using `--drop` and `--retype`. */
-	update: (s, argv) => updateCli(s.tables, s.routines ?? [], argv),
+	/** Changes the database to match the definition, if using `--drop` and `--retype`.
+	 * A table it creates gets its initial data. */
+	update: (s, argv) => updateCli(s.tables, s.routines ?? [], s.initial, argv),
 
 	/** Checks the sample rows and loads them. */
 	seed: (s, argv) => {

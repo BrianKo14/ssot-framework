@@ -7,3 +7,9 @@ export class HttpError extends Error {
 		super(message);
 	}
 }
+
+export const located = (at: string, err: unknown): Error => {
+	const message = `${at}${(err as Error).message}`;
+
+	return err instanceof HttpError ? new HttpError(err.status, message) : new Error(message);
+};

@@ -1,19 +1,26 @@
 // Router for reads (POST, PUT, PATCH, _undo, DELETE, LOCK, UNLOCK)
 
-import type { Request, RequestHandler, Response, Router } from 'express';
+import express, { type Request, type RequestHandler, type Response, type Router } from 'express';
 import { forgetting, logging, undoing, UNDO } from '../../auth/changes.js';
 import { HttpError } from '../../errors.js';
+import type { Imported } from '../../shared/api.js';
+import { fileRows, formatReading } from '../../format/registry.js';
 import type { ColumnInfo } from '../../schema/model.js';
 import { LOCK, STAMP } from '../../schema/reserved.js';
 import { asRecord, checkedValues, inserted, namedColumns } from '../../schema/values.js';
+import { script } from '../../sql/ddl.js';
 import { equalities, where } from '../../sql/filter.js';
 import { insertSql } from '../../sql/insert.js';
 import { q } from '../../sql/identifier.js';
+import { loadStatements } from '../../sql/seed.js';
 import { wrap } from '../handler.js';
 import { deletableBy, readableBy } from '../permission.js';
 import {
 	askedField, holder, type Mount, preconditions, presentedVersion, refuseUnmatched, routes, unheld,
 } from './mount.js';
+
+/** An imported file arrives as text. */
+const fileBody = express.text({ type: 'text/plain', limit: '5mb' });
 
 export function writeRouter(m: Mount): Router {
 	const { db, t, table, cols, pkCols, byPk, updatable } = m;
@@ -67,17 +74,40 @@ export function writeRouter(m: Mount): Router {
 		else res.status(204).end();
 	};
 
+	// INSERT INTO table (col1, col2, ...) VALUES ($1, $2, ...) RETURNING *
+	const insertOne: RequestHandler = wrap(async (req, res) => {
+		const body = m.withInherited(req, asRecord(req.body));			    // under a master, its key comes from the path
+		const { given, values } = inserted(t, body);
+
+		const rows = await db.query(`${insertSql(t, given)} returning ${cols}`, given.map(c => values[c.name]));
+
+		res.status(201).json(await m.wire(rows[0]));			            // return the newly created row, including the PK
+	});
+
+	/** The rows of a file, inserted as in with `db:seed`. Each checked same as POST would be, all or nothing. */
+	const importFile: RequestHandler = wrap(async (req, res) => {
+		const format = formatReading(req.query.format);
+
+		if (typeof req.body !== 'string') throw new HttpError(400, `send the file as ${format.contentType}`);
+
+		const name = `${t.entity}.${String(req.query.format)}`;
+		const source = { name, entity: t.entity, ...fileRows(format, name, req.body) };
+
+		// Under a master, every row gets its key from the path
+		const statements = loadStatements([t], [source], { fill: row => m.withInherited(req, row) });
+
+		if (statements.length) await db.query(script(statements, `import into ${t.entity}`));
+
+		const imported: Imported = { inserted: statements.length };
+
+		res.status(201).json(imported);
+	});
+
 	return routes()
-		// POST /
-		// INSERT INTO table (col1, col2, ...) VALUES ($1, $2, ...) RETURNING *
-		.post('/', wrap(async (req, res) => {
-			const body = m.withInherited(req, asRecord(req.body));			    // under a master, its key comes from the path
-			const { given, values } = inserted(t, body);
 
-			const rows = await db.query(`${insertSql(t, given)} returning ${cols}`, given.map(c => values[c.name]));
-
-			res.status(201).json(await m.wire(rows[0]));			            // return the newly created row, including the primary key
-		}))
+		// POST / — one row, as JSON
+		// POST /?format=txt — a file of rows, as the export of that format writes them
+		.post('/', fileBody, (req, res, next) => (req.query.format === undefined ? insertOne : importFile)(req, res, next))
 
 		// PUT /:pk0[/:pk1...] — full update, omitted columns set to null
 		.put(byPk, update(() => updatable))

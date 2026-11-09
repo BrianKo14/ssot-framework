@@ -15,6 +15,10 @@ npm run db:create -- --apply   # run it against DATABASE_URL
 
 `--apply` is optional. If you don't pass it, the SQL is printed to stdout. If you do, it is applied to the database specified in `DATABASE_URL` (or the default in `.env`).
 
+It ends with the system's **initial data**: one `.tab` file per entity in `src/example/initial`
+(`materias.tab`, `periodos.tab`), the rows a table starts with when it is created. They are
+checked and loaded exactly like the sample data below, in the same statement as the schema.
+
 `npm run db:reset` is the whole cycle for development: it destroys the Postgres
 volume, starts a fresh one, applies the schema to it and loads the sample data
 (below). **It deletes everything**, users included, so the next step is always
@@ -29,7 +33,11 @@ AUTH_PASSWORD='yourpassword' npm run auth:user -- brian --role admin
 
 `npm run db:seed` writes the inserts for the example's sample data, one `.tab` file
 per entity in `src/example/aida`, named after the entity (`docentes.tab`,
-`evaluacion.preguntas.tab`).
+`evaluacion.preguntas.tab`). The catalogs are initial data instead (above), so they are
+already there when it runs.
+
+A file has the same shape the screen exports as *Texto*, and the screen can import one into the
+table it shows (*Insertar → Importar Texto*), with the same checks.
 
 ```
 npm run db:seed                # print it
@@ -49,6 +57,8 @@ npm run db:update -- --drop --retype --apply
 ```
 
 It always connects, since comparing means reading the database. If nothing differs, it writes no SQL. Applying is one statement, so a failure partway leaves the database untouched. Against an empty database it does what `db:create` does.
+
+A table it creates gets its initial data (the file named after it in `src/example/initial`), at the end of the same statement. A table that already exists gets none, even if it gains columns. If the same run adds an fk from existing rows onto those initial rows, it is refused: create the table first, then add the fk in a second run.
 
 ### `--drop`
 

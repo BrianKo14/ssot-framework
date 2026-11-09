@@ -43,11 +43,17 @@ export interface FilterCondition {
 	value: unknown;
 }
 
+/** The answer to an import (`POST /api/<table>?format=<name>`). */
+export interface Imported {
+	inserted: number;
+}
+
 /** Note: Only the formats that hand back a file are listed. */
 export interface FormatMeta {
 	name: string;		// e.g. "xlsx", i.e. what `?format=` takes
 	label: string;		// human-readable name, e.g. "Excel"
 	extension: string;	// e.g. "xlsx"
+	imports: boolean;	// whether a file in it can be sent back, as `POST ?format=`
 }
 
 export interface SystemMeta {

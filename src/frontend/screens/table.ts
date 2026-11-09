@@ -1,4 +1,4 @@
-// A table's screen: its grid, the record panel beside it, its toolbar (filters, insert, export,
+// A table's screen: its grid, the record panel beside it, its toolbar (filters, insert, export, import,
 // ancestor columns), and who else is on it.
 
 import type { Capability, ColumnMeta, FormatMeta, Lock, SystemMeta, TableMeta, Viewer } from '../../shared/api.js';
@@ -14,6 +14,7 @@ import { addressOf, key, reached, type Row } from '../model/rows.js';
 import { same } from '../kit/text.js';
 import { restarted } from '../wire/auth.js';
 import { download } from '../wire/export.js';
+import { chosenFile, upload } from '../wire/import.js';
 import { watching } from '../wire/presence.js';
 import { api } from '../wire/api.js';
 import { panelOf } from '../panel/panel.js';
@@ -176,7 +177,26 @@ export function tableScreen(meta: SystemMeta, env: Env): TableScreen {
 			`${t.entity}.${f.extension}`).catch(failSoftly),
 	});
 
-	const inserts = actionMenu('Insertar', [insertRow, ancestorField]);
+	/** One per format `_meta` says can be read back. The file's rows go in all together, or none do.
+	 * An insert, so it sits with the inserts on the band, not with the export in the header. */
+	const importAs = (f: FormatMeta): Action => ({
+		text: `Importar ${f.label}`,
+		needs: 'create',
+		run: t => void (async () => {
+			const file = await chosenFile(f.extension);
+
+			if (!file || screen !== t || !sheet) return;
+
+			busy(`Importando ${file.name}…`);
+
+			const { inserted } = await upload(listPath(t.entity, { format: f.name }), file);
+
+			await load(sheet);
+			say(`${inserted} fila(s) importada(s) de ${file.name} · ${sheet.summary()}`);
+		})().catch(failSoftly),
+	});
+
+	const inserts = actionMenu('Insertar', [insertRow, ...meta.formats.filter(f => f.imports).map(importAs), ancestorField]);
 	const exports = actionMenu('Exportar', meta.formats.map(saveAs), { className: 'exports', iconOnly: true });
 
 	byId('entities').replaceChildren(...tables.map(viewers.link));

@@ -16,6 +16,14 @@ export interface Sheet {
 	rows: Record<string, unknown>[];
 }
 
+/** Rows read from a file, before any table has processed them. */
+export interface Parsed {
+	/** The column names the file declares, in its order. */
+	names: string[];
+	/** Keyed by column name. */
+	rows: Record<string, unknown>[];
+}
+
 export interface Format {
 	/** The human-readable name of the format, for menus and such. */
 	readonly label: string;
@@ -24,8 +32,14 @@ export interface Format {
 	/** If present, it downloads with this extension. If absent, the format is shown inline. */
 	readonly extension?: string;
 
+	// Writing
 	render(sheet: Sheet): ReadableStream<Uint8Array>;
+	// Reading
+	read?(text: string): Parsed;
 }
+
+/** A format that can be imported. */
+export type Reading = Format & Required<Pick<Format, 'read'>>;
 
 
 

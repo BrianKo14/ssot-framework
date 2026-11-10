@@ -6,7 +6,7 @@ import { HttpError } from '../../errors.js';
 import type { Imported } from '../../shared/api.js';
 import { fileRows, formatReading } from '../../format/registry.js';
 import type { ColumnInfo } from '../../schema/model.js';
-import { LOCK, STAMP } from '../../schema/reserved.js';
+import { LOCK } from '../../schema/reserved.js';
 import { asRecord, checkedValues, inserted, namedColumns } from '../../schema/values.js';
 import { script } from '../../sql/ddl.js';
 import { equalities, where } from '../../sql/filter.js';
@@ -42,10 +42,7 @@ export function writeRouter(m: Mount): Router {
 			const params: unknown[] = [];
 
 			// Update the columns the body provided
-			const sets = [
-				...given.map(c => `${q(c.name)} = $${params.push(values[c.name])}`),
-				`${q(STAMP.name)} = ${q(STAMP.name)} + 1`,	// updated on every write
-			].join(', ');
+			const sets = given.map(c => `${q(c.name)} = $${params.push(values[c.name])}`).join(', ');
 
 			const at = equalities(m.addressedRow(req), params);
 			const addressed = where([...at, ...preconditions(req, version, params)]);

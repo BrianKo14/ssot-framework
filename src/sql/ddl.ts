@@ -2,7 +2,7 @@
 
 import type { RoutineKind } from 'system-definition';
 import type { ColumnInfo, RoutineInfo, TableInfo, TriggerInfo, Typed } from '../schema/model.js';
-import { stored } from '../schema/reserved.js';
+import { fired, stored } from '../schema/reserved.js';
 import {
 	canonicalType, checkedName, checkedSchema, columnList, DEFAULT_SCHEMA, generatedName, q, qualified,
 	storageType, tableRef,
@@ -394,7 +394,7 @@ export function targets(tables: TableInfo[], routines: RoutineInfo[] = []): Targ
 	/** The names already used in the schema this table lives in. */
 	const namesIn = (t: TableInfo): Set<string> => taken.get(t.schema)!;
 
-	const triggers = tables.flatMap(t => t.triggers);
+	const triggers = tables.flatMap(fired);
 	const asked = [...new Set([...routines, ...triggers.map(tr => tr.routine)])];
 	const schemas = new Set([...taken.keys(), ...asked.map(r => checkedSchema(r.schema))]);
 

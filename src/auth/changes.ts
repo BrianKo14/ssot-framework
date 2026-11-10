@@ -130,7 +130,7 @@ export function undoing(t: TableInfo, given: ColumnInfo[], params: unknown[],
 	};
 
 	const write = `update ${tableRef(t)}`
-		+ ` set ${[...given.map(back), `${q(STAMP.name)} = ${q(STAMP.name)} + 1`].join(', ')}`
+		+ ` set ${given.map(back).join(', ')}`
 		+ ` from ${q(SPENT)}`
 		+ `${where([...addressed, `${q(SPENT)}.${q(KEPT)} is not null`])} returning ${answer}`;
 
